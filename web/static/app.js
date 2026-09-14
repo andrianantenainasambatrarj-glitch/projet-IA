@@ -433,9 +433,11 @@ function renderVision(payload) {
     ? '<span class="badge ok">Lecture réussie</span>'
     : (img.transmise_au_modele ? '<span class="badge err">Lecture en échec</span>'
       : '<span class="badge warn">Aucune IA vision configurée</span>');
-  let html = '<p class="small">Capture reçue : <b>' + Number(img.taille_ko || 0).toFixed(1) + " Ko</b>" +
-    (img.reduite ? " (réduite automatiquement depuis " + Number(img.taille_origine_ko || 0).toFixed(1) + " Ko)" : "") +
-    " · " + etat +
+  const entete = img.taille_ko
+    ? "Capture reçue : <b>" + Number(img.taille_ko).toFixed(1) + " Ko</b>" +
+      (img.reduite ? " (réduite automatiquement depuis " + Number(img.taille_origine_ko || 0).toFixed(1) + " Ko)" : "")
+    : "Capture enregistrée lors de cette analyse";
+  let html = '<p class="small">' + entete + " · " + etat +
     (img.modele_vision ? ' · modèle : <span class="mono">' + esc(img.modele_vision) + "</span>" : "") + "</p>";
   if (!img.transmise_au_modele) {
     html += '<div class="banner">' + icon("warn") +
@@ -1373,6 +1375,17 @@ async function openReport(reportId) {
       model: report.model,
       analysis: (report.analysis && report.analysis.instrument) ? report.analysis : null,
       observation: report.observation,
+      // Une analyse relue depuis l'historique n'a plus l'image : on restitue au moins
+      // ce qui a été lu et si la lecture avait réussi, sans inventer de taille.
+      image: report.observation
+        ? {
+          fournie: true,
+          transmise_au_modele: !!report.observation.available || !!report.observation.error,
+          lecture_reussie: !!report.observation.available,
+          modele_vision: report.observation.model || "",
+          erreur: report.observation.error || "",
+        }
+        : { fournie: false },
       sources: report.sources || [],
       rag_mode: "—",
       warnings: report.warnings || [],

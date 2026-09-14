@@ -24,3 +24,7 @@ data/
 
 # Outils de développement de l’interface (facultatif)
 node_modules/
+
+# Dépendances des outils de développement (vérificateur d’interface)
+node_modules/
+package-lock.json

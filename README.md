@@ -16,7 +16,8 @@ interface web complète et **API REST**.
 | Bloc | Détail |
 | --- | --- |
 | 🔍 **Analyse d'un marché** | Actions, indices, crypto, devises, matières premières (AAPL, ^FCHI, BTC-USD, EURUSD=X, GC=F…) |
-| 🖼️ **Analyse d'une capture** | Vous envoyez un screenshot de graphique (TradingView, MT4/5…) : le LLM vision le transcrit (figure, niveaux, tendance, UT), puis l'analyse est croisée avec les données réelles si le symbole est reconnu |
+| 🖼️ **Analyse d'une capture** | Vous envoyez un screenshot de graphique (TradingView, MT4/5…) : le LLM vision le transcrit (figure, niveaux, tendance, UT), l'analyse est croisée avec les données réelles, et **l'actif lu sur l'image est confronté au symbole analysé** — en cas de désaccord, l'application le signale et propose l'analyse du bon symbole en un clic |
+| 🔎 **Traçabilité de la capture** | Le résultat affiche ce que l'IA a réellement lu (actif, unité de temps, figures, résumé, incertitudes, confiance), la taille de l'image transmise et, dans la foulée, **les requêtes de recherche lancées dans vos cours** |
 | 📄 **Import de cours dans l'analyse** | Glissez un PDF/une note **directement dans l'onglet Analyse** : le document est indexé à la volée, puis l'analyse s'appuie immédiatement dessus (citations `[Source n]`) |
 | 🧮 **Moteur technique** | Tendance et structure de marché, pivots, supports/résistances, figures chartistes (ETE, double sommet/creux, triangles, canaux, ranges), figures de bougies (marteau, avalement, étoile du matin…), divergences prix/RSI, cassures avec volume |
 | 📐 **Indicateurs** | RSI, MACD, bandes de Bollinger, ATR, stochastique, Williams %R, ADX/DMI, OBV, volumes, profil de volume |
@@ -296,13 +297,17 @@ pip install pytest
 python -m pytest tests -q
 ```
 
-**98 tests** couvrent : indicateurs techniques, découpage/ingestion (dont un vrai PDF),
+**119 tests** couvrent : indicateurs techniques, découpage/ingestion (dont un vrai PDF),
 base vectorielle, recherche hybride (y compris le repli BM25), moteur d'analyse, couche
 vision, services d'orchestration, API REST, protection par jeton, interface web,
 **notifications** (envoi réel vers un webhook local), **veille automatique**, **bascule
 automatique de modèle Gemini** (modèle retiré → modèle disponible, testé de bout en bout),
-**sources de marché crypto Binance**, et **non-régression des erreurs de logique corrigées**
-(RSI neutre, scénarios à 100 %, période/journalié incompatibles, chandeliers de démo…).
+**sources de marché crypto Binance**, **non-régression des erreurs de logique corrigées**
+(RSI neutre, scénarios à 100 %, période/journalié incompatibles, chandeliers de démo…) et
+**chaîne complète de l'analyse d'image** (`tests/test_liaison_image.py`) : reconnaissance des
+paires « EUR/USD »/« ETH/USDT », transmission réelle de l'image au fournisseur (contenu de la
+requête HTTP vérifié), détection d'une incohérence entre la capture et le symbole analysé,
+requêtes RAG tracées, analyse automatique de l'actif lu sur l'image.
 Aucun test ne nécessite Internet ni clé API.
 
 ### Vérifier l'interface dans un vrai moteur JavaScript (facultatif)
