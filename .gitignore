@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# Configuration locale (contient vos clés API)
+.env
+
+# Données d'exécution : index vectoriel, documents importés, historique des analyses
+data/
+*.sqlite3
+
+# Divers
+.DS_Store
+.idea/
+.vscode/
+*.log

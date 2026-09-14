@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ app_name }} — analyse &amp; prédiction de graphiques</title>
+  <meta name="description" content="Analyse technique, RAG sur vos cours de trading et LLM vision : prédictions probabilistes avec gestion du risque.">
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📈</text></svg>">
+</head>
+<body>
+<div class="wrap">
+
+  <header class="top">
+    <div class="brand">
+      <div class="logo">TV</div>
+      <div>
+        <h1>{{ app_name }}</h1>
+        <p>RAG sur vos cours + LLM vision + moteur d'indicateurs — v{{ app_version }}</p>
+      </div>
+    </div>
+    <div class="badges" id="badges">
+      <span class="badge">Chargement du diagnostic…</span>
+    </div>
+  </header>
+
+  {% if llm.mode_demo %}
+  <div class="banner">
+    🎛️ <b>Mode démo actif</b> — aucun fournisseur LLM n'est configuré. Le moteur technique
+    (tendance, supports/résistances, figures, indicateurs, plan de trading, prédiction
+    probabiliste) et la recherche dans vos cours fonctionnent intégralement.
+    Pour activer la <b>lecture d'image par IA</b> et la <b>rédaction par LLM</b>, ajoutez une
+    clé API gratuite : <span class="mono">GEMINI_API_KEY</span> (Google AI Studio),
+    <span class="mono">OPENAI_API_KEY</span>, <span class="mono">ANTHROPIC_API_KEY</span>
+    ou <span class="mono">OPENROUTER_API_KEY</span> dans les variables d'environnement du
+    service, puis redémarrez.
+  </div>
+  {% endif %}
+
+  <nav class="tabs">
+    <button class="active" data-tab="tab-analyse">🔍 Analyse &amp; prédiction</button>
+    <button data-tab="tab-graphique">📈 Graphique</button>
+    <button data-tab="tab-chat">💬 Chat sur mes cours</button>
+    <button data-tab="tab-connaissances">📚 Base de connaissances</button>
+    <button data-tab="tab-historique">🗂️ Historique</button>
+    <button data-tab="tab-aide">❓ Aide</button>
+  </nav>
+
+  <!-- =================================================== ANALYSE ======== -->
+  <section class="tab-panel active" id="tab-analyse">
+    <div class="card">
+      <h2>Analyser un marché ou une capture de graphique</h2>
+      <p class="hint">
+        Renseignez un symbole (ex. <span class="mono">AAPL</span>, <span class="mono">BTC-USD</span>,
+        <span class="mono">^FCHI</span>, <span class="mono">EURUSD=X</span>) et/ou joignez une capture.
+        L'analyse croise les données de marché, vos cours indexés (RAG) et, si une clé LLM est
+        configurée, la lecture de l'image par IA.
+      </p>
+
+      <form id="form-analyse" class="grid cols-3">
+        <label class="field">
+          <span>Symbole / marché</span>
+          <input type="text" id="symbol" list="symbols-list" placeholder="AAPL, BTC-USD, ^FCHI…" value="{{ default_symbol }}">
+          <datalist id="symbols-list">
+            {% for item in symboles %}
+            <option value="{{ item.symbol }}">{{ item.name }} — {{ item.asset }}</option>
+            {% endfor %}
+          </datalist>
+        </label>
+        <label class="field">
+          <span>Période</span>
+          <select id="period">
+            {% for key, label in periodes.items() %}
+            <option value="{{ key }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label class="field">
+          <span>Unité de temps</span>
+          <select id="interval">
+            {% for key, label in intervalles.items() %}
+            <option value="{{ key }}">{{ label }}</option>
+            {% endfor %}
+          </select>
+        </label>
+      </form>
+
+      <label class="field">
+        <span>Capture du graphique (optionnel, PNG/JPG — max {{ max_upload_mb }} Mo)</span>
+      </label>
+      <div class="dropzone" id="dropzone">
+        <b>Cliquez ou glissez-déposez une capture de graphique</b>
+        <div class="small">TrainingView, MT4/MT5, TradingView, capture d'écran… (analyse d'image par IA si clé LLM configurée)</div>
+        <input type="file" id="image-input" accept="image/*" style="display:none">
+      </div>
+
+      <label class="field mt">
+        <span>Votre question (optionnel)</span>
+        <textarea id="question" placeholder="Ex : La figure est-elle valide ? Où placer mon stop et mes objectifs ? Quel est le risque ?"></textarea>
+      </label>
+
+      <div class="btn-row">
+        <button type="button" class="btn primary" id="btn-analyse">Analyser et prédire</button>
+        <button type="button" class="btn ghost" id="btn-demo">Exemple guidé (AAPL)</button>
+        <label class="field" style="margin:0;min-width:120px">
+          <span>Extraits de cours (top-k)</span>
+          <input type="number" id="topk" value="5" min="1" max="12">
+        </label>
+      </div>
+    </div>
+
+    <div class="card" id="result-card" style="display:none">
+      <div class="flex" id="meta" style="margin-bottom:14px"></div>
+      <div class="verdict" id="verdict"></div>
+      <div id="warnings"></div>
+
+      <h3>Conclusion détaillée</h3>
+      <div class="md" id="answer"></div>
+
+      <h3>Niveaux clés détectés</h3>
+      <div id="levels"></div>
+
+      <h3>Figures détectées</h3>
+      <div id="patterns"></div>
+
+      <h3>Extraits de cours utilisés (RAG)</h3>
+      <div class="sources" id="sources"></div>
+
+      <details class="disclaimer">
+        <summary>⚠️ Avertissement</summary>
+        <p>
+          Cette analyse est produite à titre éducatif et informatif. Elle ne constitue pas un
+          conseil en investissement. Les marchés comportent un risque de perte en capital ;
+          les performances passées ne préjugent pas des performances futures. Vérifiez chaque
+          niveau et n'engagez qu'un capital dont la perte est acceptable.
+        </p>
+      </details>
+    </div>
+  </section>
+
+  <!-- ================================================= GRAPHIQUE ======== -->
+  <section class="tab-panel" id="tab-graphique">
+    <div class="card">
+      <h2>Graphique interactif</h2>
+      <p class="hint">
+        Bougies, moyennes mobiles, bandes de Bollinger, RSI, volumes et niveaux clés calculés par
+        le moteur. Survolez le graphique pour lire les valeurs précises.
+      </p>
+      <div class="chart-toolbar">
+        <div class="flex">
+          <input type="text" id="chart-symbol" list="symbols-list" style="max-width:190px" placeholder="Symbole">
+          <select id="chart-period" style="max-width:130px">
+            {% for key, label in periodes.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+          </select>
+          <select id="chart-interval" style="max-width:140px">
+            {% for key, label in intervalles.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+          </select>
+          <select id="chart-limit" style="max-width:150px">
+            <option value="120">120 bougies</option>
+            <option value="180" selected>180 bougies</option>
+            <option value="260">260 bougies</option>
+            <option value="400">400 bougies</option>
+          </select>
+          <button class="btn" id="chart-refresh">Actualiser</button>
+        </div>
+        <div class="legend" id="chart-legend"></div>
+      </div>
+      <div class="canvas-box">
+        <canvas id="chart" height="560"></canvas>
+        <div class="tooltip" id="tooltip"></div>
+      </div>
+      <p class="small mt" id="chart-status">Chargement…</p>
+    </div>
+  </section>
+
+  <!-- ====================================================== CHAT ======== -->
+  <section class="tab-panel" id="tab-chat">
+    <div class="card">
+      <h2>Poser une question sur vos cours</h2>
+      <p class="hint">
+        Recherche hybride (vecteurs + mots-clés) dans votre base de connaissances. Si un LLM est
+        configuré, la réponse est rédigée et cite les passages utilisés ([Source n]) ; sinon les
+        extraits les plus pertinents sont affichés, classés par score.
+      </p>
+      <form id="form-chat" class="flex">
+        <input type="text" id="chat-question" placeholder="Ex : Qu'est-ce qu'une épaule-tête-épaules et comment la trader ?" style="flex:1 1 420px">
+        <select id="chat-topk" style="max-width:150px">
+          <option value="3">3 extraits</option>
+          <option value="5" selected>5 extraits</option>
+          <option value="8">8 extraits</option>
+        </select>
+        <button class="btn primary" id="btn-chat">Demander</button>
+      </form>
+      <div id="chat-history" class="mt"></div>
+    </div>
+  </section>
+
+  <!-- ============================================ CONNAISSANCES ======== -->
+  <section class="tab-panel" id="tab-connaissances">
+    <div class="card">
+      <h2>Ma base de connaissances</h2>
+      <p class="hint">
+        Importez vos cours (PDF, Markdown, texte). Ils sont découpés par sections, vectorisés et
+        utilisés par l'analyse et le chat. Le corpus d'exemple fourni est déjà indexé.
+      </p>
+      <div class="flex" id="kb-stats"></div>
+
+      <div class="grid cols-2 mt">
+        <form id="form-upload">
+          <h3>Importer des fichiers</h3>
+          <label class="field">
+            <span>PDF, .md, .txt — max {{ max_upload_mb }} Mo par fichier</span>
+            <input type="file" id="kb-files" multiple accept=".pdf,.md,.markdown,.txt,.text,.rst">
+          </label>
+          <div class="btn-row">
+            <button class="btn primary" id="btn-upload">Indexer les fichiers</button>
+            <button type="button" class="btn" id="btn-reindex">Réindexer tout</button>
+          </div>
+        </form>
+
+        <form id="form-text">
+          <h3>Ajouter une note texte</h3>
+          <label class="field"><span>Titre</span><input type="text" id="text-title" placeholder="Ma méthode de trading"></label>
+          <label class="field"><span>Contenu</span><textarea id="text-content" placeholder="Collez ici une fiche, un résumé de cours, vos règles…"></textarea></label>
+          <button class="btn primary" id="btn-text">Indexer la note</button>
+        </form>
+      </div>
+
+      <h3>Tester la recherche</h3>
+      <form id="form-search" class="flex">
+        <input type="text" id="search-query" placeholder="Ex : divergence RSI sur double sommet" style="flex:1 1 380px">
+        <button class="btn" id="btn-search">Rechercher</button>
+      </form>
+
+      <h3>Documents indexés</h3>
+      <div id="docs-table"><div class="empty">Chargement…</div></div>
+    </div>
+  </section>
+
+  <!-- ================================================= HISTORIQUE ======= -->
+  <section class="tab-panel" id="tab-historique">
+    <div class="card">
+      <h2>Historique des analyses</h2>
+      <p class="hint">Chaque analyse est enregistrée : vous pouvez la relire, l'exporter en Markdown ou la supprimer.</p>
+      <div class="btn-row" style="margin-bottom:12px">
+        <button class="btn" id="btn-refresh-reports" onclick="loadReports()">Actualiser</button>
+      </div>
+      <div id="reports-table"><div class="empty">Chargement…</div></div>
+    </div>
+  </section>
+
+  <!-- ====================================================== AIDE ======== -->
+  <section class="tab-panel" id="tab-aide">
+    <div class="card">
+      <h2>Comment ça marche</h2>
+      <ol>
+        <li><b>Ingestion</b> — vos PDF/notes sont découpés par sections, puis vectorisés
+          (<span class="mono">embeddings</span>) et stockés dans la base locale.</li>
+        <li><b>Analyse technique</b> — le moteur calcule tendance, structure, supports/résistances,
+          figures chartistes et chandeliers, RSI, MACD, ADX, ATR, Bollinger, volumes, puis un
+          score directionnel et un plan (entrée, stop, objectifs, R/R).</li>
+        <li><b>Recherche RAG</b> — la description du graphique et la question servent de requête ;
+          les 3-5 extraits les plus pertinents de vos cours sont récupérés (recherche hybride
+          vecteurs + BM25).</li>
+        <li><b>LLM vision</b> — si une clé API est configurée, l'image est transcrite en description
+          structurée, puis le modèle rédige l'analyse finale en s'appuyant explicitement sur vos
+          cours (citations <span class="mono">[Source n]</span>).</li>
+        <li><b>Réponse</b> — conclusion, prédiction probabiliste, plan de trading, scénario
+          alternatif, limites, avertissement.</li>
+      </ol>
+
+      <h3>API</h3>
+      <p class="hint">Documentation interactive : <a href="/api/docs" target="_blank">/api/docs</a>. Principaux points d'entrée :</p>
+      <table class="data">
+        <thead><tr><th>Méthode</th><th>Route</th><th>Rôle</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">POST</td><td class="mono">/api/analyze</td><td>Analyse complète (symbole et/ou image en base64)</td></tr>
+          <tr><td class="mono">POST</td><td class="mono">/api/analyze/upload</td><td>Analyse depuis un fichier image (multipart)</td></tr>
+          <tr><td class="mono">POST</td><td class="mono">/api/chat</td><td>Question sur vos cours (RAG)</td></tr>
+          <tr><td class="mono">GET</td><td class="mono">/api/market/{symbole}</td><td>Données de marché + séries + résumé technique</td></tr>
+          <tr><td class="mono">GET</td><td class="mono">/api/knowledge</td><td>Documents indexés et statistiques</td></tr>
+          <tr><td class="mono">POST</td><td class="mono">/api/knowledge/upload</td><td>Import de PDF/notes</td></tr>
+          <tr><td class="mono">GET</td><td class="mono">/api/reports</td><td>Historique des analyses</td></tr>
+          <tr><td class="mono">GET</td><td class="mono">/api/health</td><td>Diagnostic (LLM, marché, index)</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Activer la vision et la rédaction par IA</h3>
+      <p class="hint">
+        Ajoutez une variable d'environnement sur votre hébergement puis redémarrez :
+        <span class="mono">GEMINI_API_KEY</span> (clé gratuite sur Google AI Studio — recommandé),
+        <span class="mono">OPENAI_API_KEY</span>, <span class="mono">ANTHROPIC_API_KEY</span> ou
+        <span class="mono">OPENROUTER_API_KEY</span>. Options utiles :
+        <span class="mono">LLM_PROVIDER</span> (forçage du fournisseur),
+        <span class="mono">VISION_MODEL</span>, <span class="mono">TEXT_MODEL</span>,
+        <span class="mono">EMBEDDING_PROVIDER</span> (<span class="mono">gemini</span> pour des
+        embeddings sémantiques de meilleure qualité).
+      </p>
+
+      <h3>Limites assumées</h3>
+      <ul>
+        <li>Aucune garantie de gain : les sorties sont des scénarios probabilistes.</li>
+        <li>La lecture d'image peut se tromper sur les valeurs d'échelle ou de temps.</li>
+        <li>Les données de marché sont gratuites (Yahoo/Stooq) avec un léger différé ; si le réseau
+          est indisponible, l'application bascule sur des séries de démonstration clairement
+          signalées.</li>
+        <li>Les embeddings par défaut (hachage local) sont légers : pour une recherche sémantique
+          plus fine, utilisez un fournisseur d'embeddings API ou <span class="mono">sentence-transformers</span>.</li>
+      </ul>
+
+      <details class="disclaimer">
+        <summary>⚠️ Avertissement complet</summary>
+        <p>
+          TradeVision IA est un outil pédagogique d'aide à la décision. Il ne fournit ni conseil
+          en investissement, ni recommandation personnalisée, ni garantie de résultat. Les
+          marchés financiers présentent un risque de perte totale ou partielle du capital.
+          L'utilisateur reste seul responsable de ses décisions et de leur conformité aux
+          réglementations applicables.
+        </p>
+      </details>
+    </div>
+  </section>
+
+  <footer class="foot">
+    {{ app_name }} v{{ app_version }} — Python / FastAPI · RAG local · moteur technique déterministe.
+    {% if est_espace_huggingface %} Hébergé sur Hugging Face Spaces.{% endif %}
+  </footer>
+</div>
+
+<div id="toasts"></div>
+
+<script>
+  window.APP_CONFIG = {
+    appVersion: {{ app_version | tojson }},
+    modeDemo: {{ llm.mode_demo | tojson }},
+    provider: {{ llm.provider_actif | tojson }},
+    visionDisponible: {{ llm.vision_disponible | tojson }},
+    defaultSymbol: {{ default_symbol | tojson }},
+    defaultPeriod: {{ default_period | tojson }},
+    defaultInterval: {{ default_interval | tojson }},
+    maxUploadMb: {{ max_upload_mb | tojson }},
+    chunks: {{ connaissances.chunks | tojson }},
+    documents: {{ connaissances.documents | tojson }},
+    showKbHint: false
+  };
+</script>
+<script src="/static/app.js"></script>
+</body>
+</html>
