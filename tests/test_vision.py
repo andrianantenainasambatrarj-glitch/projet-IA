@@ -185,25 +185,31 @@ def test_embeddings_gemini_utilisent_le_meme_en_tete(monkeypatch):
     assert _FauxClient.appels[-1]["headers"]["x-goog-api-key"] == cle
 
 
-def test_message_d_erreur_explique_les_cles_invalides(monkeypatch):
+def test_message_d_erreur_si_le_modele_n_existe_plus(monkeypatch):
+    """Un 404 de modèle ne doit plus accuser la clé : il déclenche un repli de modèle."""
     from app import llm as module_llm
+
+    class _FauxReponsePasOk:
+        status_code = 404
+        text = (
+            '{"error": {"code": 404, "message": "This model models/gemini-2.5-flash '
+            'is no longer available to new users. Please use models/gemini-3.6-flash."}}'
+        )
+
+        def json(self):
+            return {"error": {"message": self.text}}
 
     class _ClientRefus(_FauxClient):
         def post(self, url, **kwargs):
             return _FauxReponsePasOk()
 
-    class _FauxReponsePasOk:
-        status_code = 404
-        text = "models/gemini-2.5-flash is not found"
-
     monkeypatch.setattr(module_llm.httpx, "Client", _ClientRefus)
-    client = module_llm.GeminiLLM("AQ.cleFausse")
+    module_llm._MODELS_CACHE.clear()
+    client = module_llm.GeminiLLM("AQ.cleDeTest", vision_model="gemini-2.5-flash")
 
-    try:
+    with pytest.raises(module_llm.LLMError) as erreur:
         client.generate(system="s", messages=[{"role": "user", "content": "x"}], images=[])
-    except module_llm.LLMError as exc:
-        message = str(exc)
-        assert "GEMINI_API_KEY" in message
-        assert "AQ." in message
-    else:
-        raise AssertionError("une LLMError était attendue")
+    message = str(erreur.value)
+    assert "Modèles essayés" in message
+    assert "VISION_MODEL" in message
+    assert "no longer available" in message

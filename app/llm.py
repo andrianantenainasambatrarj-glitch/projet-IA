@@ -17,8 +17,12 @@ import httpx
 from .config import Settings, get_settings
 
 #: Modèles par défaut (surchargables par variables d'environnement).
+#: Modèles par défaut (surchargables par variables d'environnement).
+#: Pour Gemini, la valeur est vide : le modèle est découvert automatiquement avec votre
+#: clé (voir GEMINI_MODEL_PREFERENCES). Google renomme et retire des modèles très
+#: régulièrement, ce qui provoquait l'erreur 404 « no longer available to new users ».
 DEFAULT_MODELS: dict[str, dict[str, str]] = {
-    "gemini": {"vision": "gemini-2.5-flash", "text": "gemini-2.5-flash"},
+    "gemini": {"vision": "", "text": ""},
     "openai": {"vision": "gpt-4o-mini", "text": "gpt-4o-mini"},
     "anthropic": {"vision": "claude-sonnet-4-5", "text": "claude-sonnet-4-5"},
     "openrouter": {
@@ -27,6 +31,73 @@ DEFAULT_MODELS: dict[str, dict[str, str]] = {
     },
     "ollama": {"vision": "qwen2.5vl:7b", "text": "qwen2.5vl:7b"},
 }
+
+#: Modèles Gemini essayés dans cet ordre (du plus récent au plus ancien).
+GEMINI_MODEL_PREFERENCES: tuple[str, ...] = (
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-3-flash",
+    "gemini-3.6-pro",
+    "gemini-3-pro",
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+    "gemini-2.0-flash",
+)
+
+#: Cache de la liste des modèles disponibles, par clé API.
+_MODELS_CACHE: dict[str, tuple[float, list[str]]] = {}
+_MODELS_TTL = 1800.0  # 30 minutes
+
+#: Dernière erreur par fournisseur (affichée dans l'interface pour ne pas mentir).
+_LAST_ERRORS: dict[str, dict[str, str]] = {}
+
+
+def record_llm_error(provider: str, message: str) -> None:
+    """Mémorise la dernière erreur d'un fournisseur."""
+    from datetime import datetime, timezone
+
+    _LAST_ERRORS[provider or "inconnu"] = {
+        "message": (message or "")[:400],
+        "horodatage": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+
+
+def clear_llm_error(provider: str) -> None:
+    """Efface l'erreur mémorisée après un appel réussi."""
+    _LAST_ERRORS.pop(provider or "inconnu", None)
+
+
+def last_llm_error(provider: str) -> dict[str, str]:
+    """Dernière erreur connue pour un fournisseur (dict vide si aucune)."""
+    return dict(_LAST_ERRORS.get(provider, {}))
+
+
+def _is_model_unavailable(message: str) -> bool:
+    """Distingue « modèle retiré/introuvable » (réessayable) d'une erreur de quota."""
+    texte = (message or "").lower()
+    indices = (
+        "no longer available",
+        "not_found",
+        "is not found",
+        "not found",
+        "does not exist",
+        "unsupported model",
+        "not supported for",
+        "is not supported",
+        "deprecated",
+    )
+    return any(indice in texte for indice in indices) and "model" in texte
+
+
+def _should_try_next_model(message: str) -> bool:
+    """Faut-il essayer un autre modèle ? (modèle retiré OU simple erreur 404).
+
+    Un 404 sur un endpoint de modèle signifie toujours « ce modèle n'est pas
+    disponible pour ce compte » : on tente le suivant plutôt que d'abandonner,
+    même si le corps de la réponse est peu explicite.
+    """
+    return _is_model_unavailable(message) or "(404)" in message
+
 
 PROVIDER_LABELS: dict[str, str] = {
     "gemini": "Google Gemini (clé gratuite AI Studio)",
@@ -122,16 +193,160 @@ def _image_mime(data: bytes) -> str:
 # --------------------------------------------------------------------- #
 
 class GeminiLLM(BaseLLM):
+    """Client Gemini tolérant aux changements de modèles de Google.
+
+    Google renomme et retire régulièrement ses modèles (`gemini-2.5-flash` a été
+    retiré aux nouveaux comptes, remplacé par `gemini-3.6-flash`). Ce client :
+
+    1. **découvre** les modèles réellement disponibles pour votre clé (`/v1beta/models`) ;
+    2. **choisit** le meilleur modèle disponible selon ``GEMINI_MODEL_PREFERENCES`` ;
+    3. **réessaie automatiquement** avec le modèle suivant si Google en retire un ;
+    4. accepte les deux formats de clé (`AQ.…` nouvelles clés *Auth* → en-tête
+       `x-goog-api-key`, et `AIza…` anciennes → paramètre `?key=`).
+    """
+
     provider = "gemini"
 
     def __init__(self, api_key: str, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.api_key = (api_key or "").strip()
+        self._resolved_model = ""
+        self._resolved_vision_model = ""
+        self._resolved_text_model = ""
 
     @property
     def ready(self) -> bool:
         return bool(self.api_key)
 
+    @property
+    def label(self) -> str:
+        """Modèle réellement utilisé (les modèles configurés peuvent être vides)."""
+        return f"{self.provider}:{self._resolved_model or self.vision_model or 'auto'}"
+
+    @property
+    def vision_model_effective(self) -> str:
+        return self._resolved_vision_model or self._resolved_model or self.vision_model or "auto"
+
+    # ------------------------------------------------------------ modèles
+    @property
+    def _headers(self) -> dict[str, str]:
+        """En-tête d'authentification (obligatoire pour les clés « AQ. » d'AI Studio)."""
+        return {"x-goog-api-key": self.api_key, "Content-Type": "application/json"}
+
+    def list_models(self, *, refresh: bool = False) -> list[str]:
+        """Modèles disponibles pour cette clé (cache 30 min, liste vide si échec)."""
+        import time
+
+        cle = self.api_key[-10:] if len(self.api_key) > 10 else self.api_key
+        maintenant = time.time()
+        if not refresh:
+            entree = _MODELS_CACHE.get(cle)
+            if entree and maintenant - entree[0] < _MODELS_TTL:
+                return list(entree[1])
+
+        modeles: list[str] = []
+        try:
+            with httpx.Client(timeout=min(self.timeout, 20.0)) as client:
+                response = client.get(
+                    "https://generativelanguage.googleapis.com/v1beta/models",
+                    params={"key": self.api_key, "pageSize": 200},
+                    headers=self._headers,
+                )
+            if response.status_code < 400:
+                for item in response.json().get("models") or []:
+                    if "generateContent" not in (item.get("supportedGenerationMethods") or []):
+                        continue
+                    nom = str(item.get("name", "")).replace("models/", "").strip()
+                    if nom:
+                        modeles.append(nom)
+        except Exception:
+            modeles = []
+
+        if modeles:
+            _MODELS_CACHE[cle] = (maintenant, modeles)
+        return modeles
+
+    def _candidate_models(self, use_images: bool) -> list[str]:
+        """Ordre d'essai : modèle demandé → modèles disponibles (préférences) → secours."""
+        disponibles = self.list_models()
+        preferes = [nom for nom in GEMINI_MODEL_PREFERENCES if nom in disponibles]
+        autres = sorted(
+            nom
+            for nom in disponibles
+            if nom not in preferes
+            and "embedding" not in nom
+            and not nom.endswith(("-tts", "-image", "-live", "-audio", "-vision"))
+        )
+        candidats: list[str] = []
+        demandes = [
+            # Le modèle qui a déjà fonctionné est prioritaire (aucun essai inutile
+            # du modèle retiré lors des appels suivants).
+            self._resolved_model,
+            self.vision_model if use_images else (self.text_model or self.vision_model),
+            self.vision_model,
+            self.text_model,
+        ]
+        for nom in [*demandes, *preferes, *autres, *GEMINI_MODEL_PREFERENCES]:
+            nom = (nom or "").strip()
+            if nom and nom not in candidats:
+                candidats.append(nom)
+        return candidats[:6]
+
+    # ------------------------------------------------------------ appel HTTP
+    def _call(
+        self,
+        model: str,
+        *,
+        system: str,
+        contents: list[dict[str, Any]],
+        max_tokens: int | None,
+        temperature: float | None,
+        json_mode: bool,
+    ) -> tuple[str, dict[str, Any]]:
+        payload: dict[str, Any] = {
+            "systemInstruction": {"parts": [{"text": system}]},
+            "contents": contents,
+            "generationConfig": {
+                "temperature": self.temperature if temperature is None else temperature,
+                "maxOutputTokens": max_tokens or self.max_tokens,
+            },
+        }
+        if json_mode:
+            payload["generationConfig"]["responseMimeType"] = "application/json"
+
+        url = (
+            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        )
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                response = client.post(
+                    url,
+                    params={"key": self.api_key},
+                    headers=self._headers,
+                    json=payload,
+                )
+        except httpx.HTTPError as exc:
+            raise LLMError(f"Réseau indisponible vers Gemini : {exc}") from exc
+
+        if response.status_code >= 400:
+            detail = response.text[:400]
+            if response.status_code == 429:
+                detail += (
+                    " | Quota gratuit atteint : patientez quelques minutes ou activez la "
+                    "facturation sur Google Cloud."
+                )
+            raise LLMError(f"Gemini ({response.status_code}) : {detail}")
+
+        data = response.json()
+        choices = data.get("candidates") or []
+        if not choices:
+            feedback = data.get("promptFeedback") or {}
+            raise LLMError(f"Gemini n'a renvoyé aucun texte (feedback : {feedback}).")
+        parts = ((choices[0].get("content") or {}).get("parts")) or []
+        text = "\n".join(part.get("text", "") for part in parts).strip()
+        return text, (data.get("usageMetadata") or {})
+
+    # ------------------------------------------------------------ API publique
     def generate(
         self,
         *,
@@ -146,7 +361,6 @@ class GeminiLLM(BaseLLM):
         if not self.ready:
             raise LLMError("Clé GEMINI_API_KEY absente.")
         use_images = self.supports_vision if use_vision is None else use_vision
-        model = self.vision_model if (use_images and images) else (self.text_model or self.vision_model)
 
         contents: list[dict[str, Any]] = []
         for index, message in enumerate(messages):
@@ -164,53 +378,42 @@ class GeminiLLM(BaseLLM):
                     )
             contents.append({"role": role, "parts": parts})
 
-        payload: dict[str, Any] = {
-            "systemInstruction": {"parts": [{"text": system}]},
-            "contents": contents,
-            "generationConfig": {
-                "temperature": self.temperature if temperature is None else temperature,
-                "maxOutputTokens": max_tokens or self.max_tokens,
-            },
-        }
-        if json_mode:
-            payload["generationConfig"]["responseMimeType"] = "application/json"
+        candidats = self._candidate_models(use_images)
+        derniere_erreur: Optional[LLMError] = None
 
-        url = (
-            f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-        )
-        # Depuis 2026, Google AI Studio délivre des clés « Auth » (préfixe AQ.) qui
-        # DOIVENT être transmises dans l'en-tête x-goog-api-key. On envoie les deux
-        # formes (en-tête + ?key=) pour rester compatible avec les clés AIza…
-        headers = {"x-goog-api-key": self.api_key, "Content-Type": "application/json"}
-        try:
-            with httpx.Client(timeout=self.timeout) as client:
-                response = client.post(
-                    url, params={"key": self.api_key}, headers=headers, json=payload
+        for position, model in enumerate(candidats):
+            try:
+                text, usage = self._call(
+                    model,
+                    system=system,
+                    contents=contents,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    json_mode=json_mode,
                 )
-        except httpx.HTTPError as exc:
-            raise LLMError(f"Réseau indisponible vers Gemini : {exc}") from exc
+            except LLMError as exc:
+                derniere_erreur = exc
+                message = str(exc)
+                if position + 1 < len(candidats) and _should_try_next_model(message):
+                    continue  # modèle retiré par Google → on essaie le suivant
+                if _should_try_next_model(message):
+                    raise LLMError(
+                        "Aucun modèle Gemini disponible n'a pu répondre. Modèles essayés : "
+                        + ", ".join(candidats[:4])
+                        + f". Détail : {message} | Forcez un modèle avec la variable "
+                        "VISION_MODEL (ex. gemini-3.6-flash)."
+                    ) from exc
+                raise
+            self._resolved_model = model
+            if use_images:
+                self._resolved_vision_model = model
+            else:
+                self._resolved_text_model = model
+            return LLMResponse(text=text, provider=self.provider, model=model, usage=usage)
 
-        if response.status_code >= 400:
-            detail = response.text[:300]
-            if response.status_code in (400, 401, 403, 404):
-                detail += (
-                    " | Vérifiez la valeur de GEMINI_API_KEY : les nouvelles clés AI Studio"
-                    " (préfixe AQ.) ne doivent pas être entourées de guillemets ni d'espaces."
-                )
-            raise LLMError(f"Gemini ({response.status_code}) : {detail}")
-        data = response.json()
-        candidates = data.get("candidates") or []
-        if not candidates:
-            feedback = data.get("promptFeedback") or {}
-            raise LLMError(f"Gemini n'a renvoyé aucun texte (feedback : {feedback}).")
-        parts = ((candidates[0].get("content") or {}).get("parts")) or []
-        text = "\n".join(part.get("text", "") for part in parts).strip()
-        return LLMResponse(
-            text=text,
-            provider=self.provider,
-            model=model,
-            usage=data.get("usageMetadata") or {},
-        )
+        if derniere_erreur is not None:
+            raise derniere_erreur
+        raise LLMError("Aucun modèle Gemini n'a pu être utilisé.")
 
 
 # --------------------------------------------------------------------- #
@@ -503,6 +706,8 @@ def build_llm(settings: Settings | None = None) -> Optional[BaseLLM]:
         "max_tokens": settings.llm_max_tokens,
     }
     if provider == "gemini" and settings.gemini_api_key:
+        # vision_model / text_model peuvent être vides : GeminiLLM découvre alors
+        # automatiquement les modèles disponibles pour la clé.
         return GeminiLLM(settings.gemini_api_key, **common)
     if provider == "openai" and settings.openai_api_key:
         return OpenAICompatLLM(
@@ -560,25 +765,43 @@ def clear_llm_cache() -> None:
 
 
 def provider_status(settings: Settings | None = None) -> dict[str, Any]:
-    """État de la configuration LLM (affiché dans l'interface)."""
+    """État réel de la configuration LLM (affiché dans l'interface).
+
+    ``vision_disponible`` n'est vrai que si un fournisseur est configuré **et**
+    qu'aucune erreur récente n'a été enregistrée : l'interface ne doit jamais
+    afficher « Vision active » alors que les appels échouent.
+    """
     settings = settings or get_settings()
-    configured = {
+    configure = {
         "gemini": bool(settings.gemini_api_key),
         "openai": bool(settings.openai_api_key),
         "anthropic": bool(settings.anthropic_api_key),
         "openrouter": bool(settings.openrouter_api_key),
         "ollama": bool(settings.ollama_base_url),
     }
-    active = _resolve_provider(settings)
+    actif = _resolve_provider(settings)
     llm = get_llm(settings)
+    erreur = last_llm_error(actif)
+    modele_vision = ""
+    modele_texte = ""
+    if llm is not None:
+        modele_vision = getattr(llm, "vision_model_effective", "") or getattr(llm, "vision_model", "")
+        modele_texte = getattr(llm, "text_model", "") or modele_vision
+        if isinstance(llm, GeminiLLM):
+            disponibles = llm.list_models()
+            if disponibles and modele_vision in ("", "auto"):
+                modele_vision = "auto (détecté au 1er appel)"
+
     return {
         "provider_configure": settings.llm_provider,
-        "provider_actif": active,
+        "provider_actif": actif,
         "mode_demo": llm is None,
-        "vision_disponible": bool(llm is not None and llm.supports_vision),
-        "modele_vision": getattr(llm, "vision_model", "") if llm else "",
-        "modele_texte": getattr(llm, "text_model", "") if llm else "",
-        "cles_detectees": configured,
+        "vision_disponible": bool(llm is not None and llm.supports_vision and not erreur),
+        "modele_vision": modele_vision,
+        "modele_texte": modele_texte,
+        "cle_detectee": configure.get(actif, False),
+        "cles_detectees": configure,
+        "derniere_erreur": erreur,
         "libelles": PROVIDER_LABELS,
         "aide": (
             "Aucune clé API détectée : l'application fonctionne en mode démo "

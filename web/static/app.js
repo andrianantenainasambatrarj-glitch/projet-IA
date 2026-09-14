@@ -1201,14 +1201,38 @@ async function loadHealth() {
     const payload = await api("/api/health");
     const badges = [];
     const llm = payload.llm || {};
-    badges.push(llm.mode_demo
-      ? '<span class="badge warn">Mode démo (sans clé LLM)</span>'
-      : '<span class="badge ok">IA ' + esc(llm.provider_actif) + '</span>');
+    const erreur = llm.derniere_erreur || {};
+    if (llm.mode_demo) {
+      badges.push('<span class="badge warn">Mode démo (sans clé LLM)</span>');
+    } else if (erreur.message) {
+      badges.push('<span class="badge err" title="' + esc(erreur.message) + '">IA ' +
+        esc(llm.provider_actif) + ' — erreur (' + esc((erreur.horodatage || "").slice(11, 16)) + ')</span>');
+    } else {
+      badges.push('<span class="badge ok">IA ' + esc(llm.provider_actif) +
+        (llm.modele_vision ? ' · ' + esc(llm.modele_vision) : '') + '</span>');
+    }
     if (llm.vision_disponible) badges.push('<span class="badge ok">Vision active</span>');
+    else if (!llm.mode_demo) badges.push('<span class="badge err">Vision indisponible</span>');
     const marche = (payload.marche || {}).provider_actif;
     badges.push('<span class="badge ' + (marche === "demo" ? "warn" : "ok") + '">Données ' + esc(marche) + '</span>');
     const kb = payload.connaissances || {};
     badges.push('<span class="badge info">' + (kb.chunks || 0) + ' extraits de cours</span>');
+    const zoneBanniere = $("#banner-ia");
+    if (zoneBanniere) {
+      if (erreur.message) {
+        zoneBanniere.innerHTML = '<div class="banner" style="border-color:#7f2626;' +
+          'background:linear-gradient(180deg, rgba(239,68,68,0.14), transparent);color:#fca5a5">' +
+          '⚠️ <b>Le fournisseur IA a renvoyé une erreur</b> — l\'application fonctionne en repli ' +
+          '(moteur technique + vos cours).<br><span class="mono small">' + esc(erreur.message) +
+          '</span><br><span class="small">Vérifiez <span class="mono">GEMINI_API_KEY</span> et le modèle ' +
+          '(laissez <span class="mono">VISION_MODEL</span> vide pour la détection automatique). ' +
+          'Détail : <a href="/api/health">/api/health</a>.</span></div>';
+      } else if (llm.mode_demo) {
+        zoneBanniere.innerHTML = zoneBanniere.innerHTML; // bannière serveur conservée
+      } else {
+        zoneBanniere.innerHTML = "";
+      }
+    }
     const notif = payload.notifications || {};
     if (notif.pret) {
       badges.push('<span class="badge ' + ((payload.veille || {}).actif ? "ok" : "") + '">' +

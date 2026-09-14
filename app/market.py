@@ -258,19 +258,57 @@ def _from_yahoo_api(symbol: str, period: str, interval: str, timeout: float) -> 
     )
 
 
+#: Correspondances Stooq pour les symboles Yahoo courants.
+_STOOQ_MAP: dict[str, str] = {
+    "^GSPC": "^spx",
+    "^IXIC": "^ndq",
+    "^DJI": "^dji",
+    "^FCHI": "^cac",
+    "^GDAXI": "^dax",
+    "^FTSE": "^ukx",
+    "^N225": "^nkx",
+    "BTC-USD": "btcusd",
+    "ETH-USD": "ethusd",
+    "SOL-USD": "solusd",
+    "EURUSD=X": "eurusd",
+    "GBPUSD=X": "gbpusd",
+    "USDJPY=X": "usdjpy",
+    "USDCHF=X": "usdchf",
+    "AUDUSD=X": "audusd",
+    "EURGBP=X": "eurgbp",
+    "XAUUSD=X": "xauusd",
+    "GC=F": "gc.f",
+    "CL=F": "cl.f",
+}
+
+
+def _stooq_ticker(symbol: str) -> str:
+    """Traduit un symbole Yahoo (AAPL, ^FCHI, EURUSD=X, BTC-USD) en symbole Stooq."""
+    majuscule = symbol.upper()
+    if majuscule in _STOOQ_MAP:
+        return _STOOQ_MAP[majuscule]
+    if majuscule.endswith("=X") and len(majuscule) >= 7:
+        return majuscule[:-2].lower()  # EURUSD=X -> eurusd
+    if majuscule.endswith("-USD"):
+        return majuscule.replace("-", "").lower()  # BTC-USD -> btcusd
+    if majuscule.endswith("=F"):
+        return majuscule[:-2].lower() + ".f"  # GC=F -> gc.f
+    ticker = symbol.lower()
+    if "." in ticker:
+        base, _, suffix = ticker.partition(".")
+        return f"{base}.{suffix}" if suffix in {"pa", "de", "us", "uk", "jp"} else f"{base}.us"
+    return f"{ticker}.us"
+
+
 def _from_stooq(symbol: str, period: str, interval: str, timeout: float) -> Instrument:
-    """Stooq (CSV, sans clé) — unités journalières/hébdomadaires uniquement."""
+    """Stooq (CSV, sans clé) — unités journalières/hébdomadaires uniquement.
+
+    Fonctionne pour les actions, les indices et aussi le forex (EURUSD=X → eurusd)
+    et la crypto (BTC-USD → btcusd).
+    """
     if interval not in {"1d", "1wk"}:
         raise MarketDataError("Stooq ne fournit que du journalier/hebdomadaire.")
-    ticker = symbol.lower().replace("^", "")
-    if "." in ticker or "-" in ticker:
-        base, _, suffix = ticker.partition(".")
-        if suffix in {"pa", "de", "us", "uk", "jp"}:
-            ticker = f"{base}.{suffix}"
-        else:
-            ticker = f"{base}.us"
-    else:
-        ticker = f"{ticker}.us"
+    ticker = _stooq_ticker(symbol)
     url = f"https://stooq.com/q/d/l/?s={ticker}&i={'w' if interval == '1wk' else 'd'}"
     with httpx.Client(timeout=timeout, follow_redirects=True) as client:
         response = client.get(url)
@@ -305,6 +343,91 @@ def _from_stooq(symbol: str, period: str, interval: str, timeout: float) -> Inst
     if len(candles) < 10:
         raise MarketDataError(f"Historique Stooq insuffisant pour {symbol}.")
     return Instrument(symbol=symbol, name=symbol, timeframe=interval, source="stooq", candles=candles)
+
+
+
+
+# ------------------------------------------------------------------ #
+#  Binance (crypto : OHLCV réels, sans clé, adapté aux serveurs)
+# ------------------------------------------------------------------ #
+
+_BINANCE_INTERVALS = {
+    "5m": "5m",
+    "15m": "15m",
+    "30m": "30m",
+    "1h": "1h",
+    "1d": "1d",
+    "1wk": "1w",
+    "1mo": "1M",
+}
+
+
+def _binance_pair(symbol: str) -> str:
+    """BTC-USD → BTCUSDT (Binance cote en USDT/USDC)."""
+    base = symbol.upper().replace("-USD", "").replace("-USDT", "").replace("USDT", "")
+    return f"{base}USDT"
+
+
+def _from_binance(symbol: str, period: str, interval: str, timeout: float) -> Instrument:
+    """Données crypto via l'API publique Binance (aucune clé, très fiable en datacenter)."""
+    if not symbol.upper().endswith(("-USD", "USDT")):
+        raise MarketDataError("Binance n'est utilisé que pour les cryptos (ex. BTC-USD).")
+    paire = _binance_pair(symbol)
+    intervalle = _BINANCE_INTERVALS.get(interval, "1d")
+    jours = _PERIOD_DAYS.get(period, 186)
+    if intervalle == "1w":
+        limite = max(30, jours // 7)
+    elif intervalle == "1M":
+        limite = max(24, jours // 30)
+    elif intervalle.endswith("m"):
+        limite = max(120, min(1000, jours * 24 * 60 // int(intervalle[:-1])))
+    elif intervalle == "1h":
+        limite = max(120, min(1000, jours * 24))
+    else:
+        limite = max(60, min(1000, jours))
+
+    dernier_erreur = ""
+    for hote in ("https://api.binance.com", "https://api.binance.us"):
+        try:
+            with httpx.Client(timeout=timeout) as client:
+                response = client.get(
+                    f"{hote}/api/v3/klines",
+                    params={"symbol": paire, "interval": intervalle, "limit": limite},
+                )
+            if response.status_code >= 400:
+                dernier_erreur = f"{hote} a répondu {response.status_code}"
+                continue
+            lignes = response.json()
+        except httpx.HTTPError as exc:
+            dernier_erreur = f"{hote} injoignable ({exc})"
+            continue
+        if not isinstance(lignes, list) or len(lignes) < 10:
+            dernier_erreur = f"{hote} n'a pas de données pour {paire}"
+            continue
+        candles = [
+            Candle(
+                t=int(ligne[0] // 1000),
+                o=float(ligne[1]),
+                h=float(ligne[2]),
+                l=float(ligne[3]),
+                c=float(ligne[4]),
+                v=float(ligne[5] or 0.0),
+            )
+            for ligne in lignes
+        ]
+        return Instrument(
+            symbol=symbol.upper(),
+            name=f"{_binance_pair(symbol)[:-4]} (crypto)",
+            currency="USD",
+            timeframe=interval,
+            source="binance",
+            candles=candles,
+        )
+    raise MarketDataError(f"Binance : {dernier_erreur or 'aucune donnée'}")
+
+
+def _is_crypto_symbol(symbol: str) -> bool:
+    return symbol.upper().endswith(("-USD", "USDT")) and not symbol.upper().endswith("=X")
 
 
 # ------------------------------------------------------------------ #
@@ -425,12 +548,20 @@ def get_instrument(
             return None
 
     instrument: Optional[Instrument] = None
-    if provider in {"auto", "yfinance"}:
+    crypto = _is_crypto_symbol(symbol)
+
+    # Pour la crypto, Binance est bien plus fiable depuis un serveur (pas de blocage
+    # datacenter) : on l'essaie en premier.
+    if crypto and provider in {"auto", "binance"}:
+        instrument = try_provider("binance", _from_binance)
+    if instrument is None and provider in {"auto", "yfinance"}:
         instrument = try_provider("yfinance", _from_yfinance)
     if instrument is None and provider in {"auto", "yahoo", "yfinance"}:
         instrument = try_provider("yahoo", _from_yahoo_api)
     if instrument is None and provider in {"auto", "stooq"}:
         instrument = try_provider("stooq", _from_stooq)
+    if instrument is None and crypto and provider in {"auto", "binance"}:
+        instrument = try_provider("binance", _from_binance)
     if instrument is None and provider in {"auto", "demo"}:
         instrument = demo_instrument(symbol, period, interval, settings.demo_candles)
         instrument.name = instrument.name or symbol
@@ -488,6 +619,7 @@ def market_status(settings: Settings | None = None) -> dict[str, Any]:
         "yfinance": lambda: _from_yfinance("AAPL", "1mo", "1d", probe_timeout),
         "yahoo": lambda: _from_yahoo_api("AAPL", "1mo", "1d", probe_timeout),
         "stooq": lambda: _from_stooq("AAPL", "1mo", "1d", probe_timeout),
+        "binance": lambda: _from_binance("BTC-USD", "1mo", "1d", probe_timeout),
     }
     for name, function in mapping.items():
         if provider not in {"auto", name}:
@@ -506,10 +638,12 @@ def market_status(settings: Settings | None = None) -> dict[str, Any]:
         except Exception as exc:
             checks.append({"provider": name, "status": "indisponible", "detail": str(exc)[:160]})
     checks.append({"provider": "demo", "status": "toujours disponible (hors-ligne)"})
-    active = next((item["provider"] for item in checks if item["status"] == "disponible"), "demo")
+    actifs = [item["provider"] for item in checks if item["status"] == "disponible"]
+    active = actifs[0] if actifs else "demo"
     resultat = {
         "provider_configure": provider,
         "provider_actif": active,
+        "providers_disponibles": actifs,
         "checks": checks,
         "symboles_populaires": POPULAR_SYMBOLS,
         "periodes": PERIODS,

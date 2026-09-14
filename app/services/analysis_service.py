@@ -9,7 +9,7 @@ from typing import Any, Optional, Sequence
 from ..analysis import AnalysisResult, analyze, render_report, to_rag_query
 from ..config import Settings, get_settings
 from ..knowledge import read_stats
-from ..llm import LLMError, get_llm
+from ..llm import LLMError, clear_llm_error, get_llm, record_llm_error
 from ..market import POPULAR_SYMBOLS, MarketDataError, get_instrument
 from ..prompts import DISCLAIMER, ANALYST_SYSTEM, build_analysis_prompt
 from ..reports import get_report_store
@@ -145,14 +145,35 @@ def _render_demo_answer(
     question: str,
     warnings: Sequence[str],
     rag_mode: str,
+    fallback_reason: str = "",
 ) -> str:
     """Réponse complète produite sans LLM : moteur technique + cours indexés."""
     lines: list[str] = []
-    lines.append(
-        "> ⚙️ **Mode démo (sans clé LLM)** : cette réponse est générée par le moteur "
-        "technique local et vos cours indexés. Ajoutez une clé API gratuite "
-        "(GEMINI_API_KEY) pour activer la lecture d'image par IA et la rédaction par LLM.\n"
-    )
+    if fallback_reason == "llm_error":
+        # Une clé est configurée mais l'appel a échoué : ne pas induire en erreur.
+        detail = ""
+        for avertissement in warnings:
+            if "Appel LLM impossible" in avertissement or "Erreur LLM" in avertissement:
+                detail = avertissement
+                break
+        lines.append(
+            "> ⚙️ **Repli local** : votre clé API est bien configurée, mais l'appel au "
+            "fournisseur IA a échoué — cette réponse est donc produite par le moteur "
+            "technique local et vos cours indexés.\n"
+        )
+        if detail:
+            lines.append(f"> 🔎 *Détail technique : {detail}*\n")
+        lines.append(
+            "> 💡 Vérifiez la variable `GEMINI_API_KEY`, le modèle utilisé "
+            "(`VISION_MODEL`, laisser vide = détection automatique) et l'état du service "
+            "sur `/api/health`.\n"
+        )
+    else:
+        lines.append(
+            "> ⚙️ **Mode démo (sans clé LLM)** : cette réponse est générée par le moteur "
+            "technique local et vos cours indexés. Ajoutez une clé API gratuite "
+            "(GEMINI_API_KEY) pour activer la lecture d'image par IA et la rédaction par LLM.\n"
+        )
 
     if observation is not None and not observation.available:
         lines.append(f"> 🖼️ Lecture de l'image indisponible : {observation.error}\n")
@@ -414,11 +435,15 @@ def run_analysis(
             model = response.model
             if not answer:
                 raise LLMError("Réponse vide du modèle.")
+            clear_llm_error(provider)
         except LLMError as exc:
-            warnings.append(f"Appel LLM impossible ({exc}) — repli sur le moteur local.")
+            message = str(exc)
+            warnings.append(f"Appel LLM impossible ({message}) — repli sur le moteur local.")
+            record_llm_error(provider, message)
             mode = "demo"
         except Exception as exc:  # pragma: no cover
             warnings.append(f"Erreur LLM inattendue ({exc}) — repli sur le moteur local.")
+            record_llm_error(provider, str(exc))
             mode = "demo"
 
     if not answer:
@@ -429,9 +454,11 @@ def run_analysis(
             question=request.question,
             warnings=warnings,
             rag_mode=retrieval.mode,
+            # Si une clé existe mais que l'appel a échoué, le dire clairement
+            # (ne pas afficher « sans clé LLM » alors que la clé est configurée).
+            fallback_reason=("llm_error" if (llm is not None and not answer) else ""),
         )
-        if mode != "demo":
-            mode = "demo"
+        mode = "demo"
 
     # 6) Persistance -------------------------------------------------- #
     report_id = ""

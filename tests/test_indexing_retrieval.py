@@ -111,3 +111,98 @@ def test_suppression_de_document(indexed_settings):
     assert store.delete_document(cible) is True
     assert store.get_document(cible) is None
     assert all(doc["doc_id"] != cible for doc in store.list_documents())
+
+
+def test_embeddings_gemini_basculent_de_modele(monkeypatch):
+    """`text-embedding-004` a été retiré : l'application doit essayer les suivants."""
+    import json as jsonlib
+
+    from app import embeddings as module_embeddings
+
+    appels: list[str] = []
+
+    class _Reponse:
+        def __init__(self, code, payload):
+            self.status_code = code
+            self._payload = payload
+            self.text = payload if isinstance(payload, str) else jsonlib.dumps(payload)
+
+        def json(self):
+            return self._payload if isinstance(self._payload, dict) else {}
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def post(self, url, **kwargs):
+            modele = url.split("/models/")[1].split(":")[0]
+            appels.append(modele)
+            if modele == "text-embedding-004":
+                return _Reponse(
+                    404,
+                    {"error": {"message": "models/text-embedding-004 is not found"}},
+                )
+            return _Reponse(200, {"embeddings": [{"values": [0.1, 0.2, 0.3]}]})
+
+    monkeypatch.setattr(module_embeddings.httpx, "Client", _Client)
+    embedder = module_embeddings.GeminiEmbedder("AQ.cleDeTest", model="text-embedding-004")
+
+    vecteurs = embedder.embed_documents(["un texte de cours"])
+    assert vecteurs and len(vecteurs[0]) == 3
+    assert appels == ["text-embedding-004", "gemini-embedding-001"], appels
+    assert embedder.label == "gemini:gemini-embedding-001"
+
+
+def test_binance_fournit_les_bougies_crypto(monkeypatch):
+    """Les cryptos passent par Binance (OHLCV réels, fiable depuis un serveur)."""
+    from app import market as module_market
+
+    class _Reponse:
+        status_code = 200
+        text = "[]"
+
+        def json(self):
+            # [openTime, open, high, low, close, volume, ...]
+            return [
+                [1700000000000 + i * 86400000, 100 + i, 105 + i, 95 + i, 102 + i, 1234.5 + i]
+                for i in range(40)
+            ]
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def get(self, url, **kwargs):
+            assert "klines" in url
+            return _Reponse()
+
+    monkeypatch.setattr(module_market.httpx, "Client", _Client)
+    instrument = module_market._from_binance("BTC-USD", "6mo", "1d", 10.0)
+
+    assert instrument.source == "binance"
+    assert len(instrument.candles) == 40
+    assert instrument.candles[-1].c == 102 + 39
+    assert instrument.candles[-1].v == 1234.5 + 39
+    assert instrument.candles[0].day.startswith("2023-11")
+
+
+def test_mapping_stooq_pour_forex_indices_et_crypto():
+    from app.market import _stooq_ticker
+
+    assert _stooq_ticker("EURUSD=X") == "eurusd"
+    assert _stooq_ticker("BTC-USD") == "btcusd"
+    assert _stooq_ticker("^FCHI") == "^cac"
+    assert _stooq_ticker("AAPL") == "aapl.us"
+    assert _stooq_ticker("MC.PA") == "mc.pa"

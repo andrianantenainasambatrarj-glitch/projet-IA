@@ -169,7 +169,7 @@ docker run -p 7860:7860 -e GEMINI_API_KEY=xxx -v tradevision-data:/data tradevis
 
 | Fournisseur | Variable | Modèle par défaut | Notes |
 | --- | --- | --- | --- |
-| **Google Gemini** ⭐ | `GEMINI_API_KEY` | `gemini-2.5-flash` | Clé gratuite, vision + texte ; clés `AQ.` (Auth, en-tête `x-goog-api-key`) et `AIza…` supportées |
+| **Google Gemini** ⭐ | `GEMINI_API_KEY` | **détection automatique** | Clé gratuite, vision + texte ; clés `AQ.` (Auth, en-tête `x-goog-api-key`) et `AIza…` supportées ; le modèle disponible est découvert au 1ᵉʳ appel |
 | OpenAI | `OPENAI_API_KEY` | `gpt-4o-mini` | `OPENAI_BASE_URL` pour tout endpoint compatible |
 | Anthropic | `ANTHROPIC_API_KEY` | `claude-sonnet-4-5` | Vision + texte |
 | OpenRouter | `OPENROUTER_API_KEY` | modèles gratuits | Accès à de nombreux modèles |
@@ -237,6 +237,45 @@ Si `API_ACCESS_TOKEN` est défini, ajoutez l'en-tête `-H "X-API-Token: votre_je
 
 ---
 
+## 🤖 Robustesse aux changements de modèles (important)
+
+Google renomme et retire ses modèles très régulièrement : `gemini-2.5-flash` a par exemple
+été **retiré aux nouveaux comptes** au profit de `gemini-3.6-flash`, ce qui provoquait :
+
+```
+Gemini (404) : This model models/gemini-2.5-flash is no longer available to new users.
+Please update your code to use models/gemini-3.6-flash
+```
+
+TradeVision IA gère cela tout seul :
+
+1. il **interroge votre clé** (`GET /v1beta/models`) pour connaître les modèles autorisés ;
+2. il **choisit le meilleur** disponible (`gemini-3.6-flash` → `gemini-3.5-flash` → `gemini-3-flash`
+   → `gemini-3.6-pro` → … → `gemini-2.5-flash`) ;
+3. il **bascule automatiquement** sur le modèle suivant si Google en retire un (y compris si
+   l'erreur est un simple `404`) ;
+4. il **mémorise** le modèle qui fonctionne pour les appels suivants.
+
+Même logique pour les embeddings (`gemini-embedding-001` → `text-embedding-004` → …).
+
+`VISION_MODEL` / `TEXT_MODEL` restent disponibles pour **imposer** un modèle, mais laissez-les
+vides : la détection automatique est plus fiable dans le temps. Le modèle réellement utilisé
+est visible sur `/api/health` (`llm.modele_vision`) et affiché dans l'en-tête de l'interface.
+
+Si un appel échoue, l'interface affiche désormais un **bandeau rouge avec l'erreur exacte**
+(fini le badge « Vision active » trompeur) et la réponse indique « **Repli local** » au lieu de
+« mode démo sans clé ».
+
+### Sources de données de marché
+
+| Priorité | Source | Couverture |
+| --- | --- | --- |
+| 1 (crypto) | **Binance** (API publique) | BTC, ETH, SOL… OHLCV réels, très fiable depuis un serveur |
+| 2 | **yfinance** (inclus dans `requirements.txt`) | Actions, indices, ETF, devises, matières premières |
+| 3 | **API Yahoo Finance** | Mêmes marchés, sans dépendance Python |
+| 4 | **Stooq** | Actions, indices, **forex** (`EURUSD=X` → `eurusd`), crypto |
+| 5 | Démonstration | Dernier recours, clairement signalé dans l'interface |
+
 ## 🔔 Notifications et veille en ligne de commande
 
 ```bash
@@ -257,11 +296,12 @@ pip install pytest
 python -m pytest tests -q
 ```
 
-**67 tests** couvrent : indicateurs techniques, découpage/ingestion (dont un vrai PDF),
+**83 tests** couvrent : indicateurs techniques, découpage/ingestion (dont un vrai PDF),
 base vectorielle, recherche hybride (y compris le repli BM25), moteur d'analyse, couche
 vision, services d'orchestration, API REST, protection par jeton, interface web,
-**notifications** (envoi réel vers un webhook local) et **veille automatique**. Aucun test
-ne nécessite Internet ni clé API.
+**notifications** (envoi réel vers un webhook local), **veille automatique**, **bascule
+automatique de modèle Gemini** (modèle retiré → modèle disponible, testé de bout en bout)
+et **sources de marché crypto Binance**. Aucun test ne nécessite Internet ni clé API.
 
 ---
 

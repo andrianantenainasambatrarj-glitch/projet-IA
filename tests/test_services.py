@@ -80,3 +80,79 @@ def test_diagnostic_complet(indexed_settings):
     assert diagnostic["llm"]["mode_demo"] is True
     assert diagnostic["marche"]["provider_actif"] in {"demo", "yahoo", "stooq", "yfinance"}
     assert diagnostic["connaissances"]["chunks"] > 0
+
+
+def test_bout_en_bout_avec_modele_gemini_retire(indexed_settings, monkeypatch):
+    """Scénario réel vécu : la clé est bonne, mais le modèle demandé n'existe plus.
+
+    L'analyse doit basculer sur le modèle disponible, produire une réponse IA
+    (et non le repli local), et le lien vision doit fonctionner avec l'image.
+    """
+    import base64 as b64
+
+    from app import llm as module_llm
+    from app.llm import GeminiLLM, clear_llm_cache
+
+    png = b64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=="
+    )
+
+    appels: list[str] = []
+
+    class _Reponse:
+        def __init__(self, code, payload):
+            import json as jsonlib
+
+            self.status_code = code
+            self._payload = payload
+            self.text = payload if isinstance(payload, str) else jsonlib.dumps(payload)
+
+        def json(self):
+            return self._payload if isinstance(self._payload, dict) else {}
+
+    class _Client:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def get(self, url, **kwargs):
+            return _Reponse(200, {"models": [
+                {"name": "models/gemini-3.6-flash", "supportedGenerationMethods": ["generateContent"]},
+            ]})
+
+        def post(self, url, **kwargs):
+            modele = url.split("/models/")[1].split(":")[0]
+            appels.append(modele)
+            if modele != "gemini-3.6-flash":
+                return _Reponse(404, {"error": {"message": (
+                    f"This model models/{modele} is no longer available to new users."
+                )}})
+            contenu = "### 1. Lecture du graphique\nAnalyse produite par le modèle de secours."
+            return _Reponse(200, {"candidates": [{"content": {"parts": [{"text": contenu}]}}]})
+
+    monkeypatch.setattr(module_llm.httpx, "Client", _Client)
+    module_llm._MODELS_CACHE.clear()
+
+    settings = indexed_settings
+    monkeypatch.setenv("LLM_PROVIDER", "gemini")
+    settings.llm_provider = "gemini"
+    settings.gemini_api_key = "AQ.cleDeTestBoutEnBout"
+    settings.vision_model = "gemini-2.5-flash"  # modèle retiré par Google
+    clear_llm_cache()
+
+    reponse = run_analysis(AnalysisRequest(symbol="AAPL", image=png), settings=settings)
+
+    assert reponse.mode == "ia", reponse.warnings
+    assert reponse.model == "gemini-3.6-flash"
+    assert "Analyse produite par le modèle de secours" in reponse.answer
+    assert "gemini-2.5-flash" in appels and "gemini-3.6-flash" in appels
+    assert reponse.observation["available"] is True
+
+    settings.gemini_api_key = ""
+    settings.vision_model = ""
+    clear_llm_cache()

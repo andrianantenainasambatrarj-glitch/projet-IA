@@ -24,6 +24,17 @@
     </div>
   </header>
 
+  <div id="banner-ia">
+  {% if llm.derniere_erreur %}
+  <div class="banner" style="border-color:#7f2626;background:linear-gradient(180deg, rgba(239,68,68,0.14), transparent);color:#fca5a5">
+    ⚠️ <b>Le fournisseur IA a renvoyé une erreur</b> — l'application fonctionne en repli
+    (moteur technique + vos cours).<br>
+    <span class="mono small">{{ llm.derniere_erreur.message }}</span><br>
+    <span class="small">Vérifiez <span class="mono">GEMINI_API_KEY</span> et le modèle utilisé
+    (laissez <span class="mono">VISION_MODEL</span> vide pour la détection automatique), puis
+    rechargez cette page. Détail complet : <a href="/api/health">/api/health</a>.</span>
+  </div>
+  {% endif %}
   {% if llm.mode_demo %}
   <div class="banner">
     🎛️ <b>Mode démo actif</b> — aucun fournisseur LLM n'est configuré. Le moteur technique
@@ -36,6 +47,7 @@
     service, puis redémarrez.
   </div>
   {% endif %}
+  </div>
 
   <nav class="tabs">
     <button class="active" data-tab="tab-analyse">🔍 Analyse &amp; prédiction</button>
@@ -399,6 +411,18 @@
         embeddings sémantiques de meilleure qualité).
       </p>
 
+      <h3>Quel modèle Gemini est utilisé ?</h3>
+      <p class="hint">
+        Google renomme et retire régulièrement ses modèles (par exemple
+        <span class="mono">gemini-2.5-flash</span>, retiré aux nouveaux comptes et remplacé par
+        <span class="mono">gemini-3.6-flash</span>). TradeVision IA <b>détecte automatiquement</b>
+        les modèles disponibles pour votre clé et bascule sur le suivant si l'un d'eux n'existe
+        plus : vous n'avez rien à changer. Le modèle réellement utilisé est indiqué dans
+        <a href="/api/health">/api/health</a> (<span class="mono">llm.modele_vision</span>) et
+        après chaque analyse. Pour l'imposer manuellement, définissez
+        <span class="mono">VISION_MODEL</span> (ex. <span class="mono">gemini-3.6-flash</span>).
+      </p>
+
       <h3>Limites assumées</h3>
       <ul>
         <li>Aucune garantie de gain : les sorties sont des scénarios probabilistes.</li>
@@ -442,6 +466,8 @@
     modeDemo: {{ llm.mode_demo | tojson }},
     provider: {{ llm.provider_actif | tojson }},
     visionDisponible: {{ llm.vision_disponible | tojson }},
+    modeleVision: {{ llm.modele_vision | tojson }},
+    derniereErreur: {{ llm.derniere_erreur | tojson }},
     defaultSymbol: {{ default_symbol | tojson }},
     defaultPeriod: {{ default_period | tojson }},
     defaultInterval: {{ default_interval | tojson }},

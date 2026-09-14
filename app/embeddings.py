@@ -144,31 +144,91 @@ def _l2_normalize(vector: list[float]) -> list[float]:
 # --------------------------------------------------------------------- #
 
 class GeminiEmbedder(BaseEmbedder):
-    """Embeddings via l'API Google Generative Language (clé AI Studio gratuite)."""
+    """Embeddings via l'API Google Generative Language (clé AI Studio gratuite).
+
+    Comme pour les modèles de génération, Google renomme/retire ses modèles
+    d'embedding (`text-embedding-004` → `gemini-embedding-001`). Le code essaie donc
+    plusieurs modèles dans l'ordre et retient celui qui répond.
+    """
 
     name = "gemini"
     needs_network = True
 
+    #: Modèles d'embedding essayés dans l'ordre.
+    MODEL_PREFERENCES: tuple[str, ...] = (
+        "gemini-embedding-001",
+        "gemini-embedding-002",
+        "text-embedding-004",
+        "text-embedding-005",
+        "embedding-001",
+    )
+
     def __init__(self, api_key: str, model: str = "", dim: int = 0, timeout: float = 60.0) -> None:
         super().__init__(dim=dim)
         self.api_key = (api_key or "").strip()
-        self.model = model or "text-embedding-004"
+        self.model = (model or "").strip()
         self.timeout = timeout
+        self._resolved_model = ""
 
     @property
     def ready(self) -> bool:
         return bool(self.api_key)
 
-    def _endpoint(self, action: str) -> str:
-        return (
-            f"https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{self.model}:{action}"
-        )
+    @property
+    def label(self) -> str:
+        return f"gemini:{self._resolved_model or self.model or 'auto'}"
 
     @property
     def _headers(self) -> dict[str, str]:
         """En-tête d'authentification (obligatoire pour les clés AQ. d'AI Studio)."""
         return {"x-goog-api-key": self.api_key, "Content-Type": "application/json"}
+
+    def _candidats(self) -> list[str]:
+        candidats = [self.model, *self.MODEL_PREFERENCES]
+        uniques: list[str] = []
+        for nom in candidats:
+            nom = (nom or "").strip()
+            if nom and nom not in uniques:
+                uniques.append(nom)
+        return uniques
+
+    def _post(self, action: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Appelle l'API en essayant successivement les modèles d'embedding connus."""
+        derniere_erreur = ""
+        for modele in self._candidats():
+            url = (
+                "https://generativelanguage.googleapis.com/v1beta/models/"
+                f"{modele}:{action}"
+            )
+            try:
+                with httpx.Client(timeout=self.timeout) as client:
+                    response = client.post(
+                        url,
+                        params={"key": self.api_key},
+                        headers=self._headers,
+                        json=payload,
+                    )
+            except httpx.HTTPError as exc:
+                raise EmbeddingError(f"Réseau indisponible vers Gemini : {exc}") from exc
+
+            if response.status_code < 400:
+                self._resolved_model = modele
+                return response.json()
+
+            detail = response.text[:300]
+            derniere_erreur = f"Gemini embeddings {modele} ({response.status_code}) : {detail}"
+            # 404 / modèle retiré : on tente le modèle suivant. Autre erreur : on s'arrête.
+            if response.status_code in (404, 400) and (
+                "not found" in detail.lower() or "no longer available" in detail.lower()
+            ):
+                continue
+            raise EmbeddingError(derniere_erreur)
+
+        raise EmbeddingError(
+            "Aucun modèle d'embedding Gemini disponible. Détail : "
+            + derniere_erreur
+            + " | Forcez un modèle avec EMBEDDING_MODEL ou repassez à EMBEDDING_PROVIDER=hashing."
+        )
 
     def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
         if not self.ready:
@@ -177,34 +237,23 @@ class GeminiEmbedder(BaseEmbedder):
             return []
         vectors: list[list[float]] = []
         batch_size = 16
-        with httpx.Client(timeout=self.timeout) as client:
-            for start in range(0, len(texts), batch_size):
-                batch = [t[:8000] for t in texts[start : start + batch_size]]
-                payload = {
-                    "requests": [
-                        {
-                            "model": f"models/{self.model}",
-                            "content": {"parts": [{"text": text}]},
-                            "taskType": "RETRIEVAL_DOCUMENT",
-                        }
-                        for text in batch
-                    ]
-                }
-                response = client.post(
-                    self._endpoint("batchEmbedContents"),
-                    params={"key": self.api_key},
-                    headers=self._headers,
-                    json=payload,
-                )
-                if response.status_code >= 400:
-                    raise EmbeddingError(
-                        f"Gemini embeddings ({response.status_code}) : {response.text[:200]}"
-                    )
-                data = response.json()
-                for item in data.get("embeddings", []):
-                    values = item.get("values") or []
-                    if values:
-                        vectors.append([float(v) for v in values])
+        for start in range(0, len(texts), batch_size):
+            batch = [t[:8000] for t in texts[start : start + batch_size]]
+            payload = {
+                "requests": [
+                    {
+                        "model": f"models/{self.model or 'gemini-embedding-001'}",
+                        "content": {"parts": [{"text": text}]},
+                        "taskType": "RETRIEVAL_DOCUMENT",
+                    }
+                    for text in batch
+                ]
+            }
+            data = self._post("batchEmbedContents", payload)
+            for item in data.get("embeddings", []):
+                values = item.get("values") or []
+                if values:
+                    vectors.append([float(v) for v in values])
         if vectors and not self._dim:
             self._dim = len(vectors[0])
         return [_l2_normalize(v) for v in vectors]
@@ -213,22 +262,12 @@ class GeminiEmbedder(BaseEmbedder):
         if not self.ready:
             raise EmbeddingError("Clé GEMINI_API_KEY absente pour les embeddings Gemini.")
         payload = {
-            "model": f"models/{self.model}",
+            "model": f"models/{self.model or 'gemini-embedding-001'}",
             "content": {"parts": [{"text": text[:8000]}]},
             "taskType": "RETRIEVAL_QUERY",
         }
-        with httpx.Client(timeout=self.timeout) as client:
-            response = client.post(
-                self._endpoint("embedContent"),
-                params={"key": self.api_key},
-                headers=self._headers,
-                json=payload,
-            )
-        if response.status_code >= 400:
-            raise EmbeddingError(
-                f"Gemini embeddings ({response.status_code}) : {response.text[:200]}"
-            )
-        values = response.json().get("embedding", {}).get("values", [])
+        data = self._post("embedContent", payload)
+        values = data.get("embedding", {}).get("values", [])
         if values and not self._dim:
             self._dim = len(values)
         return _l2_normalize([float(v) for v in values])
@@ -386,7 +425,8 @@ def build_embedder(settings: Settings | None = None) -> BaseEmbedder:
         if provider == "gemini" and settings.gemini_api_key:
             return GeminiEmbedder(
                 settings.gemini_api_key,
-                model=settings.embedding_model or "text-embedding-004",
+                # Vide = détection automatique parmi les modèles d'embedding disponibles
+                model=settings.embedding_model,
                 timeout=settings.llm_timeout_s,
             )
         if provider == "openai" and settings.openai_api_key:

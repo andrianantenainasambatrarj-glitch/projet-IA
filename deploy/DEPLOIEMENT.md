@@ -102,6 +102,18 @@ Sur GitHub, la racine du dépôt doit contenir : `app/`, `web/`, `knowledge/`, `
 2. Cliquez **Create API key** → **Create API key in new project**.
 3. Donnez-lui un nom (ex. « Projet IA ») et **copiez la clé** affichée.
 
+### 3.0 Le nom des modèles change souvent (ne vous inquiétez pas)
+
+Google retire régulièrement ses modèles : le message
+`This model models/gemini-2.5-flash is no longer available to new users. Please update your
+code to use models/gemini-3.6-flash` est **normal** et ne signifie pas que votre clé est
+mauvaise. **TradeVision IA corrige cela automatiquement** : il liste les modèles autorisés
+pour votre clé et utilise le meilleur disponible (repli en cascade si l'un est retiré).
+
+👉 **Ne remplissez pas** `VISION_MODEL` : laissez la détection automatique. Le modèle
+réellement utilisé s'affiche dans l'en-tête de l'application et sur `/api/health`
+(`llm.modele_vision`).
+
 ### 3.1 Les deux formats de clés (important)
 
 Google a changé le format de ses clés en 2026 :
@@ -207,7 +219,8 @@ de Render, jamais dans le code.
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | voir § 6 | Recevoir les analyses sur Telegram |
 | `NOTIFY_ENABLED` | `true` | Active la veille automatique |
 | `WATCHLIST` | `AAPL,BTC-USD,^FCHI` | Marchés suivis par la veille |
-| `EMBEDDING_PROVIDER` | `gemini` | Recherche sémantique de meilleure qualité (utilise la clé Gemini) |
+| `EMBEDDING_PROVIDER` | `gemini` | Recherche sémantique de meilleure qualité (utilise la clé Gemini) — le modèle d'embedding est aussi détecté automatiquement |
+| `VISION_MODEL` | *(laisser vide)* | À ne remplir que pour imposer un modèle précis (ex. `gemini-3.6-flash`) |
 | `APP_NAME` | `Mon Analyse Trading IA` | Nom affiché dans l'interface |
 
 > ⚠️ Chaque modification de variable déclenche un **redéploiement automatique** : c'est
@@ -242,7 +255,9 @@ Ouvrez `https://<votre-app>.onrender.com/api/health`. Vous devez voir :
 
 **Vérification visuelle en 10 secondes** : dans l'application, la bannière jaune
 « Mode démo actif » doit avoir **disparu**, et l'en-tête doit afficher un badge vert
-« IA gemini ». Testez ensuite *Analyse* avec une capture de graphique : la réponse contient
+« IA gemini · gemini-3.6-flash » (le modèle s'affiche après la première analyse réussie).
+Un **bandeau rouge** apparaîtrait à la place si l'appel IA échoue : il contient
+l'erreur exacte et la marche à suivre. Testez ensuite *Analyse* avec une capture de graphique : la réponse contient
 une section « Ce que l'IA voit sur l'image ».
 - `notifications.pret: true` → Telegram/webhook opérationnel
 - `veille.actif: true` → la veille tourne
@@ -380,6 +395,9 @@ Commandes : *build* `pip install -r requirements.txt`, *start* `python run.py`.
 | Toujours « Mode démo » après avoir mis la clé | Variable non enregistrée ou service non redéployé | Vérifiez `Environment`, puis *Manual Deploy → Deploy latest commit* |
 | `403` / erreur Gemini | Clé invalide, quota atteint ou région non autorisée | Régénérez la clé sur AI Studio ; testez `curl /api/health` |
 | Toujours « Mode démo » alors que la clé est saisie | Espace ou guillemets autour de la valeur, ou service non redéployé | Recopiez la clé sans guillemets ; `Save Changes` puis attendez l'état **Live** |
+| `Gemini (404) … is no longer available to new users` | Google a retiré ce modèle | **Géré automatiquement** (bascule vers `gemini-3.6-flash` ou le suivant). Laissez `VISION_MODEL` vide ; vérifiez `llm.modele_vision` sur `/api/health` |
+| Bandeau rouge « Le fournisseur IA a renvoyé une erreur » dans l'interface | L'appel IA a échoué (et l'appli travaille en repli local) | Le bandeau contient l'erreur exacte : clé à régénérer, quota `429`, ou modèle à forcer |
+| « Données demo » dans l'en-tête | Aucune source de marché accessible depuis le serveur | `yfinance` est installé par `requirements.txt` ; Binance sert la crypto, Stooq le forex. Détail : `/api/health` → `marche.checks` |
 | `401 Accès refusé` **dans l'interface web** après avoir mis `API_ACCESS_TOKEN` | Jeton non transmis | Rechargez la page (le jeton est injecté par le serveur) ; si le problème persiste, videz le cache du navigateur |
 | Données « démo » alors que le réseau marche | Yahoo/Stooq bloqués depuis l'hébergeur | `MARKET_PROVIDER=yahoo` ou `yfinance` après `pip install yfinance`, sinon acceptez le mode démo |
 | Documents perdus après un redémarrage | Disque éphémère du plan gratuit | Réimportez vos PDF, ou passez à un disque persistant payant, ou utilisez un stockage externe |

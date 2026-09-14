@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import Any, Sequence
 
 from ..config import Settings, get_settings
-from ..llm import LLMError, get_llm
+from ..llm import LLMError, clear_llm_error, get_llm, record_llm_error
 from ..prompts import CHAT_SYSTEM, DISCLAIMER, build_chat_prompt
 from ..retriever import build_context, search_multi
 from ..textutils import truncate
@@ -141,11 +141,14 @@ def run_chat(request: ChatRequest, *, settings: Settings | None = None) -> ChatR
             model = response.model
             if not answer:
                 raise LLMError("Réponse vide.")
+            clear_llm_error(provider)
         except LLMError as exc:
             warnings.append(f"Appel LLM impossible ({exc}) — repli sur les extraits bruts.")
+            record_llm_error(provider, str(exc))
             mode = "demo"
         except Exception as exc:  # pragma: no cover
             warnings.append(f"Erreur LLM inattendue ({exc}).")
+            record_llm_error(provider, str(exc))
             mode = "demo"
 
     if not answer:
