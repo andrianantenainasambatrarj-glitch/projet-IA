@@ -445,6 +445,12 @@ table.data tbody tr:hover td { background: var(--accent-soft); }
 .stat .value { font-size: 18px; font-weight: 650; }
 
 /* -------------------------------------------------------------- sources */
+/* Fiche de lecture de la capture (vision) : libellé + valeur, compacte et alignée */
+.kv { display: grid; grid-template-columns: minmax(120px, auto) 1fr; gap: 7px 16px; margin: 12px 0; font-size: 13.4px; }
+.kv dt { color: var(--text-mute); font-weight: 600; }
+.kv dd { margin: 0; color: var(--text); }
+@media (max-width: 640px) { .kv { grid-template-columns: 1fr; gap: 2px 0; } .kv dd { margin-bottom: 8px; } }
+
 /* Liste d'explications (facteurs du score) : puces colorées, texte lisible */
 .notes { margin: 4px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; }
 .notes li { position: relative; padding-left: 20px; font-size: 13.5px; color: var(--text-dim); line-height: 1.5; }

@@ -92,10 +92,25 @@ verifier("page servie avec ses onglets", doc.querySelectorAll("nav.tabs button")
 verifier("badges d'état remplis", texte("#badges").length > 10, texte("#badges"));
 verifier("graphique alimenté (statut)", /bougies/.test(texte("#chart-status")) || /indisponibles/.test(texte("#chart-status")), texte("#chart-status"));
 
+// Capture d'image : dépôt d'un vrai fichier PNG (lecture par FileReader)
+const png = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+  "base64"
+);
+const fichier = new window.File([new Uint8Array(png)], "capture-eurusd.png", { type: "image/png" });
+const champImage = doc.querySelector("#image-input");
+Object.defineProperty(champImage, "files", { value: { 0: fichier, length: 1 }, configurable: true });
+champImage.dispatchEvent(new window.Event("change", { bubbles: true }));
+await attendre(500);
+verifier("capture déposée et lue par l'interface", /Capture prête/.test(texte("#dropzone")), texte("#dropzone"));
+
 // Analyse (parcours principal)
 doc.querySelector("#symbol").value = "AAPL";
 cliquer("#btn-analyse");
 await attendre(2500);
+verifier("traçabilité de la capture affichée", /Capture reçue/.test(texte("#vision")), texte("#vision"));
+verifier("bloc vision renseigné (état explicite)",
+  /Capture reçue|Aucune capture/.test(texte("#vision")), texte("#vision"));
 verifier("verdict affiché", texte("#verdict").length > 20, texte("#verdict"));
 verifier("conclusion rendue", texte("#answer").length > 50, texte("#answer"));
 verifier("facteurs du score expliqués", texte("#factors").length > 20, texte("#factors"));

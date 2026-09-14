@@ -28,6 +28,13 @@ Méthode imposée, dans cet ordre :
 Règles de rigueur :
 - N'invente JAMAIS de chiffres : réutilise uniquement les valeurs fournies (rapport technique,
   observation d'image, statistiques). Si une valeur manque, indique « non disponible ».
+- COHÉRENCE CAPTURE ↔ DONNÉES : quand une capture est fournie, elle fait foi pour identifier
+  l'actif, l'unité de temps et les figures. Si l'actif lu sur la capture n'est pas celui des
+  données de marché fournies, tu DOIS l'écrire noir sur blanc dès la première ligne de la
+  section 1 (« la capture montre X, les données chiffrées portent sur Y »), baser la lecture
+  des figures et des niveaux sur la capture, et n'utiliser les données chiffrées que pour
+  l'actif qu'elles concernent réellement. Ne présente jamais des chiffres d'un actif comme
+  s'ils décrivaient la capture d'un autre actif.
 - Ne promets aucun rendement. Les probabilités sont des estimations conditionnelles,
   pas des garanties.
 - Écris en français clair, avec des titres de section et des listes à puces.
@@ -38,11 +45,14 @@ Règles de rigueur :
 ANALYSIS_USER_TEMPLATE = """CONTEXTE — DONNÉES DE MARCHÉ
 {market_context}
 
+CONTEXTE — LECTURE DE LA CAPTURE PAR LE MODÈLE VISION
+{vision_report}
+
+CONTRÔLE DE COHÉRENCE ENTRE LA CAPTURE ET LES DONNÉES CHIFFRÉES
+{coherence_context}
+
 CONTEXTE — RAPPORT TECHNIQUE CALCULÉ (moteur déterministe, chiffres fiables)
 {technical_report}
-
-CONTEXTE — LECTURE DE L'IMAGE PAR LE MODÈLE VISION
-{vision_report}
 
 CONTEXTE DES COURS (extraits de la base de connaissances de l'utilisateur)
 {course_context}
@@ -91,12 +101,20 @@ def build_analysis_prompt(
     vision_report: str,
     course_context: str,
     question: str,
+    coherence_context: str = "",
 ) -> str:
-    """Assemble le prompt utilisateur complet de l'analyse."""
+    """Assemble le prompt utilisateur complet de l'analyse.
+
+    ``coherence_context`` décrit la confrontation entre la capture envoyée et les
+    données chiffrées (même actif, ou incohérence à signaler) : sans cette section,
+    le modèle pouvait décrire un graphique d'un actif en citant les chiffres d'un autre.
+    """
     return ANALYSIS_USER_TEMPLATE.format(
         market_context=market_context.strip() or "Aucune donnée de marché chiffrée fournie.",
         technical_report=technical_report.strip() or "Non disponible.",
-        vision_report=vision_report.strip() or "Aucune image fournie.",
+        vision_report=vision_report.strip() or "Aucune capture fournie.",
+        coherence_context=coherence_context.strip()
+        or "Aucune capture fournie : analyse portant uniquement sur les données chiffrées.",
         course_context=course_context.strip() or "Aucun extrait de cours disponible.",
         question=(question or "Analyse ce graphique et donne-moi ta prédiction.").strip(),
     )

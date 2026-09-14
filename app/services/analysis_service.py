@@ -50,6 +50,12 @@ class AnalysisResponse:
     warnings: list[str] = field(default_factory=list)
     report_id: str = ""
     request: dict[str, Any] = field(default_factory=dict)
+    #: Traçabilité de la capture envoyée (taille, réduction, modèle vision, erreur).
+    image: dict[str, Any] = field(default_factory=dict)
+    #: Requêtes réellement utilisées pour interroger la base de cours (RAG).
+    rag_requetes: list[str] = field(default_factory=list)
+    #: Confrontation capture ↔ données chiffrées (symbole demandé, lu sur l'image…).
+    coherence: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -64,6 +70,9 @@ class AnalysisResponse:
             "warnings": self.warnings,
             "report_id": self.report_id,
             "request": self.request,
+            "image": self.image,
+            "rag_requetes": self.rag_requetes,
+            "coherence": self.coherence,
         }
 
 
@@ -86,14 +95,113 @@ _NOT_A_SYMBOL = {
 }
 
 
-def guess_symbol(text: str) -> str:
-    """Extrait un symbole plausible d'une description d'image.
+#: Codes de devises reconnus (permettent de convertir « EUR/USD » en « EURUSD=X »).
+_CURRENCY_CODES = {
+    "USD", "EUR", "GBP", "JPY", "CHF", "AUD", "CAD", "NZD", "CNY", "HKD", "SGD",
+    "SEK", "NOK", "DKK", "PLN", "CZK", "HUF", "MXN", "BRL", "ZAR", "TRY", "INR",
+    "KRW", "RUB", "MAD", "TND", "AED", "SAR", "ILS", "THB", "IDR", "PHP", "MYR",
+    "CLP", "ARS", "COP", "PEN", "VND", "NGN",
+}
 
-    Un symbole est écrit en majuscules dans le texte (« AAPL », « BTC-USD ») ou
-    comporte un séparateur explicite ; les mots courants en capitales sont rejetés.
+#: Cryptomonnaies courantes : « BTC/USD » devient « BTC-USD » (format Yahoo).
+_CRYPTO_CODES = {
+    "BTC", "ETH", "SOL", "XRP", "ADA", "DOGE", "BNB", "LTC", "DOT", "AVAX",
+    "LINK", "TRX", "XLM", "ATOM", "NEAR", "SUI", "TON",
+}
+
+#: Noms de devises écrits en toutes lettres (« euro dollar » → EUR/USD).
+_CURRENCY_NAMES: dict[str, str] = {
+    "EURO": "EUR", "EUROS": "EUR", "DOLLAR": "USD", "DOLLARS": "USD",
+    "LIVRE": "GBP", "LIVRES": "GBP", "YEN": "JPY", "FRANC": "CHF",
+    "FRANCS": "CHF", "DOLLAR CANADIEN": "CAD", "DOLLAR AUSTRALIEN": "AUD",
+}
+
+#: Paire écrite « EUR/USD », « EUR-USD », « ETH/USDT », « USD/JPY »…
+#: La devise de cotation peut compter jusqu'à 6 lettres (USDT, USDC, BUSD…).
+_PAIR_PATTERN = re.compile(
+    r"\b([A-Za-z]{3})\s*(?:[/\\]|-|–|—|\s)\s*([A-Za-z]{3,6})\b"
+)
+#: « EURUSD=X »
+_PAIR_GLUED = re.compile(r"\b([A-Za-z]{3})([A-Za-z]{3})=X\b")
+#: « BTCUSDT », « ETHUSDC » (crypto + stablecoin)
+_PAIR_GLUED_STABLE = re.compile(r"\b([A-Za-z]{2,5})(USDT|USDC|BUSD|FDUSD|TUSD|DAI)\b")
+#: « EURUSD », « GBPJPY »
+_PAIR_GLUED2 = re.compile(r"\b([A-Za-z]{3})([A-Za-z]{3})\b")
+
+
+#: Stablecoins : « BTC/USDT » et « BTC/USD » désignent le même marché pour un trader.
+_STABLE_COINS = {"USDT", "USDC", "BUSD", "DAI", "TUSD", "FDUSD", "USDD", "PYUSD"}
+
+
+def _ticker_from_pair(base: str, quote: str) -> str:
+    """Convertit une paire en symbole exploitable par les sources de marché."""
+    base, quote = base.upper(), quote.upper()
+    if quote in _STABLE_COINS:
+        quote = "USD"
+    if base in _STABLE_COINS:
+        base = "USD"
+    if base in _CRYPTO_CODES and quote in _CURRENCY_CODES:
+        return f"{base}-{quote}"
+    if base in _CURRENCY_CODES and quote in _CURRENCY_CODES:
+        return f"{base}{quote}=X"
+    return ""
+
+
+def find_pair_symbol(text: str) -> str:
+    """Détecte une paire (devises ou crypto) dans un texte libre.
+
+    Corrige un angle mort important : « EUR/USD » (le format affiché par tous les
+    plateformes de trading) n'était reconnu par aucune des règles historiques, qui
+    n'acceptaient que les séparateurs « . », « - » ou « = ». Une capture de graphique
+    Forex ne pouvait donc jamais être rattachée à des données de marché.
     """
     if not text:
         return ""
+    upper = text.upper()
+    # « EURUSD=X », « BTC-USD=X »…
+    for match in _PAIR_GLUED.finditer(upper):
+        ticker = _ticker_from_pair(match.group(1), match.group(2))
+        if ticker:
+            return ticker
+    # « EUR/USD », « EUR-USD », « EUR USD », « ETH/USDT »
+    for match in _PAIR_PATTERN.finditer(upper):
+        ticker = _ticker_from_pair(match.group(1), match.group(2))
+        if ticker:
+            return ticker
+    # « BTCUSDT »
+    for match in _PAIR_GLUED_STABLE.finditer(upper):
+        ticker = _ticker_from_pair(match.group(1), match.group(2))
+        if ticker:
+            return ticker
+    # « EURUSD »
+    for match in _PAIR_GLUED2.finditer(upper):
+        ticker = _ticker_from_pair(match.group(1), match.group(2))
+        if ticker:
+            return ticker
+    # « euro dollar », « dollar-yen »
+    mots = re.findall(r"[A-ZÉÈÊÀÂÎÔÛÇ]+", upper)
+    devises = [_CURRENCY_NAMES.get(mot, "") for mot in mots]
+    devises = [code for code in devises if code]
+    if len(devises) >= 2:
+        return _ticker_from_pair(devises[0], devises[1])
+    return ""
+
+
+def guess_symbol(text: str) -> str:
+    """Extrait un symbole exploitable d'une description d'image.
+
+    Un symbole est écrit en majuscules dans le texte (« AAPL », « BTC-USD ») ou
+    comporte un séparateur explicite ; les paires de devises/crypto sont converties
+    au format des fournisseurs (« EUR/USD » → « EURUSD=X », « BTC/USD » → « BTC-USD »).
+    Les mots courants en capitales sont rejetés.
+    """
+    if not text:
+        return ""
+
+    # 0) Paires de devises ou de cryptomonnaies (formats « EUR/USD », « EURUSD »…)
+    paire = find_pair_symbol(text)
+    if paire:
+        return paire
 
     # 1) Symboles connus (liste curée) : le plus fiable.
     upper = text.upper()
@@ -152,6 +260,53 @@ def _market_context(instrument) -> str:
         f"{min(candle.l for candle in candles):.6f}"
         + ("\n- " + "\n- ".join(instrument.notes) if instrument.notes else "")
     )
+
+
+def _coherence_context(
+    coherence: dict[str, Any],
+    *,
+    capture_fournie: bool,
+    observation: Optional[ChartObservation],
+) -> str:
+    """Texte injecté dans le prompt : ce que montre la capture vs ce qui est chiffré.
+
+    Sans cette section, le modèle recevait un rapport technique « chiffres fiables »
+    pour un actif et une image d'un autre actif, sans consigne de confrontation :
+    il répondait donc sur l'actif des chiffres en laissant croire qu'il décrivait
+    l'image.
+    """
+    if not capture_fournie:
+        return "- Aucune capture fournie : l'analyse repose uniquement sur les données chiffrées."
+
+    if observation is None or not observation.available:
+        erreur = (observation.error if observation is not None else "") or "raison inconnue"
+        return (
+            "- Une capture a bien été fournie, mais sa lecture automatique a échoué "
+            f"({erreur}) : ne t'appuie pas sur elle et signale-le dans la section 6."
+        )
+
+    lignes = [
+        f"- Actif lu sur la capture : {coherence.get('capture_lue') or 'non lisible'} "
+        f"(symbole exploitable : {coherence.get('symbole_capture') or 'aucun'})",
+        f"- Unité de temps lue sur la capture : {observation.timeframe or 'non lisible'}",
+        f"- Actif des données chiffrées : {coherence.get('symbole_demande') or 'aucun'}",
+    ]
+    if coherence.get("incoherent"):
+        lignes += [
+            "INCOHÉRENCE : la capture NE correspond PAS à l'actif des données chiffrées.",
+            "Consignes impératives :",
+            "  1. commence la section 1 en annonçant cette incohérence (actif de la capture "
+            "puis actif des données chiffrées) ;",
+            "  2. appuie toutes les figures et tous les niveaux de lecture sur la CAPTURE ;",
+            "  3. ne présente les niveaux calculés que comme ceux de "
+            f"{coherence.get('symbole_demande')}, jamais comme ceux de la capture ;",
+            "  4. termine la section 1 en conseillant de relancer l'analyse avec le symbole "
+            f"{coherence.get('symbole_capture') or 'lu sur la capture'} pour croiser capture "
+            "et données de marché.",
+        ]
+    else:
+        lignes.append("- Cohérence : la capture et les données chiffrées portent sur le même actif.")
+    return "\n".join(lignes)
 
 
 def _render_demo_answer(
@@ -367,31 +522,70 @@ def run_analysis(
         )
 
     # 2) Vision ------------------------------------------------------- #
+    coherence: dict[str, Any] = {
+        "symbole_demande": instrument.symbol if instrument is not None else symbol,
+        "capture_lue": "",
+        "symbole_capture": "",
+        "incoherent": False,
+        "message": "",
+    }
     if image is not None:
-        observation = read_chart(image, llm=llm, settings=settings)
+        # On annonce au modèle vision l'actif que l'application va analyser : il peut
+        # ainsi signaler une différence au lieu de la laisser passer inaperçue.
+        actif_attendu = instrument.symbol if instrument is not None else symbol
+        instruction = ""
+        if actif_attendu:
+            instruction = (
+                f"L'application analyse par ailleurs le symbole « {actif_attendu} ». "
+                "Lis l'actif réellement affiché sur l'image et, s'il diffère, écris-le "
+                "explicitement dans « marche_ou_symbole_estime »."
+            )
+        observation = read_chart(
+            image, llm=llm, settings=settings, extra_instruction=instruction
+        )
         if not observation.available:
             warnings.append(observation.error)
-        # Si l'IA propose un symbole et qu'aucun n'était fourni : analyse croisée
-        if (
-            instrument is None
-            and request.analyze_detected_symbol
-            and observation.available
-        ):
-            detected = guess_symbol(f"{observation.symbol_guess} {observation.summary}")
-            if detected:
+
+        # Confrontation capture ↔ symboles : sans ce contrôle, une capture d'un autre
+        # actif était analysée en silence avec les chiffres du symbole saisi.
+        if observation.available:
+            capture_lue = (observation.symbol_guess or "").strip()
+            detecte = guess_symbol(f"{capture_lue} {observation.summary}")
+            coherence["capture_lue"] = capture_lue
+            coherence["symbole_capture"] = detecte
+
+            if detecte and instrument is None and request.analyze_detected_symbol:
                 try:
                     instrument = get_instrument(
-                        detected, request.period, request.interval, settings=settings
+                        detecte, request.period, request.interval, settings=settings
                     )
+                    coherence["symbole_demande"] = detecte
                     warnings.append(
-                        f"Symbole « {detected} » reconnu sur l'image : les données de marché "
+                        f"Symbole « {detecte} » reconnu sur l'image : les données de marché "
                         "correspondantes ont été ajoutées pour croiser l'analyse."
                     )
                 except MarketDataError:
                     warnings.append(
-                        f"Symbole « {detected} » suggéré par l'image, mais aucune donnée "
+                        f"Symbole « {detecte} » suggéré par l'image, mais aucune donnée "
                         "de marché n'a pu être récupérée."
                     )
+            elif instrument is not None and detecte and detecte.upper() != instrument.symbol.upper():
+                coherence["incoherent"] = True
+                coherence["message"] = (
+                    f"La capture semble montrer « {capture_lue or detecte} » alors que les "
+                    f"données chiffrées portent sur {instrument.symbol}. Relancez l'analyse "
+                    f"avec le symbole {detecte} pour croiser la capture et le marché."
+                )
+                warnings.append(
+                    "Incohérence détectée : la capture ne correspond pas au symbole analysé "
+                    f"({capture_lue or detecte} sur l'image, {instrument.symbol} pour les "
+                    "données chiffrées). Les figures lues sur l'image et les niveaux calculés "
+                    "ne concernent donc pas le même actif."
+                )
+            elif instrument is not None and detecte:
+                coherence["message"] = (
+                    f"Capture et données chiffrées concordent : {instrument.symbol}."
+                )
 
     # Les notes de la source (période ajustée, repli démo…) doivent être visibles.
     if instrument is not None:
@@ -440,11 +634,16 @@ def run_analysis(
     llm_erreur = False
     answer = ""
 
+    contexte_coherence = _coherence_context(
+        coherence, capture_fournie=image is not None, observation=observation
+    )
+
     if llm is not None:
         prompt = build_analysis_prompt(
             market_context=_market_context(instrument),
             technical_report=render_report(result) if result else "",
             vision_report=observation.render() if observation else "",
+            coherence_context=contexte_coherence,
             course_context=course_context,
             question=request.question,
         )
@@ -511,6 +710,19 @@ def run_analysis(
     if result is not None:
         warnings.extend(result.warnings)
 
+    image_info = {
+        "fournie": image is not None,
+        "taille_ko": round(len(image) / 1024, 1) if image else 0.0,
+        "taille_origine_ko": round(len(request.image) / 1024, 1) if request.image else 0.0,
+        "reduite": bool(request.image and image and len(image) != len(request.image)),
+        "transmise_au_modele": bool(image is not None and llm is not None),
+        "lecture_reussie": bool(observation is not None and observation.available),
+        "modele_vision": (observation.model if observation else "") or "",
+        "erreur": (
+            observation.error if observation is not None and not observation.available else ""
+        ),
+    }
+
     return AnalysisResponse(
         answer=answer,
         mode=mode,
@@ -530,6 +742,9 @@ def run_analysis(
             "has_image": image is not None,
             "top_k": request.top_k,
         },
+        image=image_info,
+        rag_requetes=queries,
+        coherence=coherence,
     )
 
 

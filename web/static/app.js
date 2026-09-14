@@ -391,12 +391,18 @@ function renderPatterns(analysis) {
   }).join("");
 }
 
-function renderSources(sources, cible) {
+function renderSources(sources, cible, requetes) {
   const box = cible || $("#sources");
   if (!box) return;
+  // Quelles recherches ont réellement été lancées dans vos cours : rend visible le
+  // lien entre l'image envoyée, l'analyse chiffrée et la base de connaissances.
+  const trace = (requetes && requetes.length)
+    ? '<p class="small muted">Recherche documentaire lancée avec ' + requetes.length +
+      " requête(s) : " + esc(requetes.map((q) => "« " + q.slice(0, 70) + " »").join(", ")) + "</p>"
+    : "";
   if (!sources || !sources.length) {
     box.innerHTML = '<div class="empty">' + icon("book") +
-      "<p>Aucun extrait de cours récupéré. Importez vos documents dans l'onglet « Connaissances ».</p></div>";
+      "<p>Aucun extrait de cours récupéré. Importez vos documents dans l'onglet « Connaissances ».</p></div>" + trace;
     return;
   }
   box.innerHTML = sources.map((s, i) => {
@@ -406,7 +412,92 @@ function renderSources(sources, cible) {
       '</b><span class="mono">score ' + Number(s.score || 0).toFixed(2) + "</span></div>" +
       "<pre>" + esc(s.extract || "") + "</pre>" +
       '<div class="score-bar"><i style="width:' + (score * 100).toFixed(0) + '%"></i></div></div>';
-  }).join("");
+  }).join("") + trace;
+}
+
+// --------------------------------------------------------------- vision
+// Affiche ce que le moteur vision a réellement lu sur la capture, et si l'image
+// a bien été transmise au modèle : sans ce bloc, impossible de distinguer
+// « capture ignorée » de « capture lue mais non exploitée ».
+function renderVision(payload) {
+  const box = $("#vision");
+  if (!box) return;
+  const img = payload.image || {};
+  const obs = payload.observation || {};
+  if (!img.fournie) {
+    box.innerHTML = '<div class="empty">' + icon("image") +
+      "<p>Aucune capture envoyée : l'analyse repose uniquement sur les données de marché et vos cours.</p></div>";
+    return;
+  }
+  const etat = img.lecture_reussie
+    ? '<span class="badge ok">Lecture réussie</span>'
+    : (img.transmise_au_modele ? '<span class="badge err">Lecture en échec</span>'
+      : '<span class="badge warn">Aucune IA vision configurée</span>');
+  let html = '<p class="small">Capture reçue : <b>' + Number(img.taille_ko || 0).toFixed(1) + " Ko</b>" +
+    (img.reduite ? " (réduite automatiquement depuis " + Number(img.taille_origine_ko || 0).toFixed(1) + " Ko)" : "") +
+    " · " + etat +
+    (img.modele_vision ? ' · modèle : <span class="mono">' + esc(img.modele_vision) + "</span>" : "") + "</p>";
+  if (!img.transmise_au_modele) {
+    html += '<div class="banner">' + icon("warn") +
+      "<div>La capture a bien été reçue, mais <b>aucune IA vision n'est configurée</b> : " +
+      "elle n'a pas été analysée. Ajoutez une clé API (onglet <b>Aide</b>) pour activer la lecture d'image.</div></div>";
+  } else if (!img.lecture_reussie) {
+    html += '<div class="banner banner-err">' + icon("warn") +
+      "<div>La capture a été transmise mais n'a pas pu être lue : " +
+      esc(img.erreur || "raison inconnue") + "</div></div>";
+  }
+  const lignes = [
+    ["Type de graphique", obs.chart_type],
+    ["Actif lu sur l'image", obs.symbol_guess],
+    ["Unité de temps lue", obs.timeframe],
+    ["Tendance observée", obs.trend],
+    ["Fourchette de prix lue", obs.price_range],
+    ["Dernier prix estimé", obs.last_price],
+    ["Volume", obs.volume],
+  ].filter((paire) => paire[1] && String(paire[1]).trim());
+  if (lignes.length) {
+    html += '<dl class="kv">' + lignes.map((paire) =>
+      "<dt>" + esc(paire[0]) + "</dt><dd>" + esc(String(paire[1])) + "</dd>").join("") + "</dl>";
+  }
+  if ((obs.patterns || []).length) {
+    html += '<p class="small"><b>Figures vues sur la capture :</b> ' + esc(obs.patterns.join(", ")) + "</p>";
+  }
+  if ((obs.levels || []).length) {
+    html += '<p class="small"><b>Niveaux relevés sur la capture :</b> ' + esc(obs.levels.join(" · ")) + "</p>";
+  }
+  if ((obs.indicators || []).length) {
+    html += '<p class="small"><b>Indicateurs visibles :</b> ' + esc(obs.indicators.join(", ")) + "</p>";
+  }
+  if (obs.summary) html += "<p>" + esc(obs.summary) + "</p>";
+  if ((obs.uncertainties || []).length) {
+    html += '<p class="small muted">Incertitudes de lecture : ' + esc(obs.uncertainties.join(" · ")) + "</p>";
+  }
+  if (obs.confidence) {
+    html += '<p class="small muted">Confiance de la description : ' + pct(obs.confidence * 100, 0) + "</p>";
+  }
+  box.innerHTML = html;
+}
+
+// ----------------------------------------------------------- cohérence
+// Confronte l'actif lu sur la capture et le symbole des données chiffrées.
+function renderCoherence(payload) {
+  const box = $("#coherence");
+  if (!box) return;
+  const co = payload.coherence || {};
+  if (co.incoherent) {
+    const symbole = co.symbole_capture || "";
+    box.innerHTML = '<div class="banner">' + icon("warn") +
+      "<div><b>La capture ne correspond pas au symbole analysé</b><p>" + esc(co.message || "") + "</p>" +
+      (symbole
+        ? '<button type="button" class="btn" id="btn-analyser-capture" data-symbole="' + esc(symbole) + '">' +
+          icon("analyse", "ico-sm") + " Analyser " + esc(symbole) + " avec cette capture</button>"
+        : "") +
+      "</div></div>";
+  } else if (co.symbole_capture && co.message) {
+    box.innerHTML = '<div class="banner banner-info">' + icon("info") + "<div>" + esc(co.message) + "</div></div>";
+  } else {
+    box.innerHTML = "";
+  }
 }
 
 function renderFactors(analysis) {
@@ -425,10 +516,12 @@ function renderAnalysis(payload) {
   state.lastReportId = payload.report_id || "";
   const analysis = payload.analysis;
   renderVerdict(analysis);
+  renderVision(payload);
+  renderCoherence(payload);
   renderFactors(analysis);
   renderLevels(analysis);
   renderPatterns(analysis);
-  renderSources(payload.sources);
+  renderSources(payload.sources, null, payload.rag_requetes);
 
   const meta = [];
   const avertissements = (payload.warnings || []).concat((analysis && analysis.warnings) || []);
@@ -447,6 +540,14 @@ function renderAnalysis(payload) {
       esc(analysis.instrument.candles) + " bougies</span>");
   }
   if (payload.report_id) meta.push('<span class="badge no-dot">Analyse #' + esc(payload.report_id) + "</span>");
+  const image = payload.image || {};
+  if (image.fournie) {
+    meta.push(image.lecture_reussie
+      ? '<span class="badge ok">' + icon("image", "ico-sm") + " Capture lue par l'IA</span>"
+      : (image.transmise_au_modele
+        ? '<span class="badge err">Capture non lue</span>'
+        : '<span class="badge warn">Capture non analysée (aucune IA vision)</span>'));
+  }
   $("#meta").innerHTML = meta.join(" ");
 
   const uniques = avertissements.filter((w, i) => avertissements.indexOf(w) === i);
@@ -1543,11 +1644,34 @@ async function loadHealth(forcer) {
 
 /* ------------------------------------------------------------------ init */
 
+// Bouton « Analyser <symbole> avec cette capture » proposé lorsqu'une incohérence
+// est détectée entre l'actif de l'image et le symbole saisi.
+function initCoherenceActions() {
+  const box = $("#coherence");
+  if (!box) return;
+  box.addEventListener("click", (event) => {
+    const bouton = event.target.closest("#btn-analyser-capture");
+    if (!bouton) return;
+    const symbole = (bouton.dataset.symbole || "").trim();
+    if (!symbole) return;
+    $("#symbol").value = symbole;
+    sauverPreferences();
+    toast(
+      "Analyse relancée sur " + symbole + " avec la même capture" +
+      (state.imageDataUrl ? "." : " (aucune capture jointe)."),
+      "info",
+      4500
+    );
+    runAnalyse();
+  });
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   chargerPreferences();
   initTheme();
   initTabs();
   initAnalyse();
+  initCoherenceActions();
   initChartControls();
   initCrosshair();
   initChat();
