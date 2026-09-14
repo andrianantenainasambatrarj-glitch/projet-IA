@@ -1,6 +1,6 @@
 # Rapport d'audit — erreurs de logique (front + back) et refonte de l'interface
 
-**Projet :** TradeVision IA · **Date :** 14 septembre 2026 · **Version auditée :** commit `59f7775`
+**Projet :** TradeVision IA · **Date :** 14 septembre 2026 · **Version auditée :** commits `59f7775` puis `39f27ac`
 (précédent : `848723e`) · **Branche :** `arena/01a09f32-projet-ia`
 
 ---
@@ -12,7 +12,7 @@
 | Bugs de logique corrigés côté serveur (Python) | **15** |
 | Bugs corrigés côté interface (JavaScript) | **7** |
 | Tests Python | **98 réussis** (0 échec, ~7 s) dont **15 nouveaux** de non-régression |
-| Contrôles d'interface automatisés (moteur JavaScript réel) | **18 / 18 réussis**, **0 erreur JavaScript** |
+| Contrôles d'interface automatisés (moteur JavaScript réel) | **19 / 19 réussis**, **0 erreur JavaScript** |
 | Dépendances ajoutées | **aucune** (CSS et JS toujours locaux, aucun CDN) |
 | Nouveaux outils livrés | `deploy/outils/verifier_interface.mjs` (test de l'interface sans navigateur) |
 
@@ -110,6 +110,13 @@ qu'elle fait vraiment), sans aucune dépendance externe.
 - Bandeau de diagnostic permanent : état du fournisseur IA, des sources de marché,
   de la base de cours, de l'historique et de la veille, avec bouton de rafraîchissement.
 
+### Comprendre le résultat
+- **Nouveau bloc « Facteurs du score »** : chaque point du score est expliqué en clair
+  (« RSI 56 orienté à la hausse », « MACD baissier », « Prix à 92 % du haut de range :
+  peu de marge avant résistance »), suivi de la note du plan de trading. Ces explications
+  étaient calculées par le serveur mais n'étaient affichées nulle part : l'utilisateur
+  voyait un score sans pouvoir le vérifier.
+
 ### Lisibilité et honnêteté de l'information
 - **Thème sombre et thème clair** (bascule dans l'en-tête, préférence mémorisée, appliqué
   avant le premier affichage pour éviter tout clignotement).
@@ -162,7 +169,7 @@ diagnostic de marché sans appel réseau bloquant, statut IA honnête.
 ```bash
 npm install jsdom                                     # une seule fois
 node deploy/outils/verifier_interface.mjs http://127.0.0.1:8000
-# 18/18 contrôles réussis — Aucune erreur JavaScript détectée.
+# 19/19 contrôles réussis — Aucune erreur JavaScript détectée.
 ```
 Le script charge la page servie par l'application, exécute son JavaScript et pilote
 les écrans réels (analyse, graphique, recherche, chat, historique, thème). Il est
@@ -200,9 +207,11 @@ Ces points n'empêchent pas l'utilisation et sont documentés pour la suite :
 
 ## 8. Livraison
 
-- **Commit :** `59f7775` — *« fix(qualite): audit des erreurs de logique/script + refonte
-  de l'interface web »* (17 fichiers, +2 534 / −934 lignes), poussé sur la branche
-  `arena/01a09f32-projet-ia` du dépôt GitHub.
+- **Commits poussés sur la branche `arena/01a09f32-projet-ia` :**
+  - `59f7775` — *« fix(qualite): audit des erreurs de logique/script + refonte de
+    l'interface web »* (17 fichiers, +2 534 / −934 lignes) ;
+  - `39f27ac` — *« feat(interface): bloc « Facteurs du score » expliquant chaque
+    indicateur »*.
 - **Fichiers principaux modifiés :** `app/market.py`, `app/analysis.py`, `app/llm.py`,
   `app/scheduler.py`, `app/api/routes.py`, `app/services/analysis_service.py`,
   `app/retriever.py`, `app/main.py`, `app/config.py`, `web/index.html`,
