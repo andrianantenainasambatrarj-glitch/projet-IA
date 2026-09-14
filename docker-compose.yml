@@ -1,0 +1,22 @@
+# Lancement local en une commande :  docker compose up --build
+# (utile si vous ne voulez rien installer : Python, dépendances, etc.)
+services:
+  tradevision:
+    build: .
+    container_name: tradevision-ia
+    ports:
+      - "7860:7860"
+    environment:
+      PORT: "7860"
+      DATA_DIR: /data
+      MARKET_PROVIDER: auto
+      EMBEDDING_PROVIDER: auto
+      # Décommentez et renseignez pour activer la vision + la rédaction par IA :
+      # GEMINI_API_KEY: "votre_cle"
+      # LLM_PROVIDER: gemini
+    volumes:
+      - tradevision-data:/data
+    restart: unless-stopped
+
+volumes:
+  tradevision-data:

@@ -1,0 +1,15 @@
+# TradeVision IA — dépendances principales (installation rapide, ~40 Mo)
+# pip install -r requirements.txt
+
+fastapi>=0.110
+uvicorn[standard]>=0.27
+pydantic>=2.5
+pydantic-settings>=2.1
+httpx>=0.26
+jinja2>=3.1
+python-multipart>=0.0.9
+pypdf>=4.0
+# Données de marché réelles (le fournisseur le plus fiable : multi-actifs, intraday)
+yfinance>=0.2.40
+
+# Dépendances optionnelles : voir requirements-optional.txt

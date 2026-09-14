@@ -1,0 +1,18 @@
+# TradeVision IA — dépendances optionnelles (meilleure qualité, installation plus lourde)
+# pip install -r requirements.txt -r requirements-optional.txt
+
+# 1) Données de marché plus fiables et plus complètes (multi-actifs, intraday)
+yfinance>=0.2.40
+
+# 2) Embeddings sémantiques locaux (~120 Mo de modèle téléchargé au 1er lancement).
+#    Activez ensuite EMBEDDING_PROVIDER=local
+sentence-transformers>=3.0.0
+
+# 3) Base vectorielle dédiée (alternative à SQLite). Activez VECTOR_BACKEND=chroma
+chromadb>=0.5.0
+
+# 4) Redimensionnement des images envoyées au LLM vision (accélère les appels)
+pillow>=10.0.0
+
+# 5) Tests
+pytest>=8.0

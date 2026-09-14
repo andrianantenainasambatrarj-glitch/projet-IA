@@ -1,0 +1,78 @@
+# Déploiement automatique du projet sur Hugging Face Spaces.
+#
+# ⚠️ Depuis 2026, la création d'un Space Docker ou Gradio exige un plan payant
+#    (PRO 9 $/mois, ou Team/Enterprise). Les comptes gratuits ne peuvent créer que
+#    des Spaces « Static », incapables de faire tourner FastAPI. Pour un hébergement
+#    GRATUIT, utilisez Render : voir deploy/DEPLOIEMENT.md (option A).
+#
+# INSTALLATION : copiez ce fichier dans  .github/workflows/sync-hf-space.yml
+#   mkdir -p .github/workflows && cp deploy/github-workflow-sync-hf-space.yml \
+#       .github/workflows/sync-hf-space.yml
+# (il est livré ici pour être poussable sans la permission « workflows » GitHub :
+#  GitHub Actions ne lit que le chemin .github/workflows/)
+#
+# Mise en place (une seule fois) :
+#  1. Créez un Space « Docker » sur https://huggingface.co/new-space
+#     (nom suggéré : tradevision-ia, SDK : Docker, port : 7860).
+#  2. Créez un token Hugging Face avec le droit « write » (Settings → Access Tokens).
+#  3. Dans le dépôt GitHub → Settings → Secrets and variables → Actions :
+#       - Secret  HF_TOKEN  = votre token Hugging Face
+#       - Variable HF_SPACE = "votre-pseudo/tradevision-ia"
+#  4. Poussez sur la branche « main » : ce workflow synchronise le Space.
+#
+# Résultat : votre application est en ligne sur
+#   https://huggingface.co/spaces/<votre-pseudo>/tradevision-ia
+name: Déployer sur Hugging Face Spaces
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: hf-space-deploy
+  cancel-in-progress: true
+
+jobs:
+  sync-space:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer le dépôt
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Préparer le contenu du Space
+        run: |
+          mkdir -p /tmp/space
+          rsync -a \
+            --exclude '.git' \
+            --exclude '.github' \
+            --exclude 'data' \
+            --exclude '.venv' \
+            --exclude '__pycache__' \
+            --exclude '*.sqlite3' \
+            --exclude '.env' \
+            ./ /tmp/space/
+          # L'entête YAML exigée par Hugging Face devient le README du Space
+          cp hf_space/README.md /tmp/space/README.md
+          ls -la /tmp/space
+
+      - name: Pousser vers le Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE: ${{ vars.HF_SPACE }}
+        run: |
+          if [ -z "$HF_TOKEN" ] || [ -z "$HF_SPACE" ]; then
+            echo "::warning::HF_TOKEN ou HF_SPACE non configuré — déploiement ignoré."
+            exit 0
+          fi
+          cd /tmp/space
+          git init -b main
+          git config user.email "actions@github.com"
+          git config user.name "GitHub Actions"
+          git add -A
+          git commit -m "Déploiement depuis GitHub ($(date -u +%Y-%m-%dT%H:%MZ))"
+          git remote add space "https://user:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE}"
+          git push --force space main
+          echo "✅ Space mis à jour : https://huggingface.co/spaces/${HF_SPACE}"

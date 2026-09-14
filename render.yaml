@@ -1,0 +1,32 @@
+# Déploiement gratuit sur Render (https://render.com) — plan gratuit, HTTPS inclus.
+# 1) Poussez ce dépôt sur GitHub.
+# 2) Render → New → Blueprint → sélectionnez votre dépôt (il lit ce fichier).
+# 3) Ajoutez les variables secrètes (GEMINI_API_KEY…) dans l'onglet Environment.
+services:
+  - type: web
+    name: tradevision-ia
+    runtime: python
+    plan: free
+    region: frankfurt
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.txt
+    startCommand: python run.py
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: DATA_DIR
+        value: /opt/render/project/src/data
+      - key: MARKET_PROVIDER
+        value: auto
+      - key: EMBEDDING_PROVIDER
+        value: auto
+      - key: LOG_LEVEL
+        value: INFO
+      # Décommentez et renseignez pour activer la vision + la rédaction par IA :
+      # - key: GEMINI_API_KEY
+      #   sync: false
+      # - key: API_ACCESS_TOKEN
+      #   sync: false
