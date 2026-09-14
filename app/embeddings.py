@@ -162,8 +162,13 @@ class GeminiEmbedder(BaseEmbedder):
     def _endpoint(self, action: str) -> str:
         return (
             f"https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{self.model}:{action}?key={self.api_key}"
+            f"{self.model}:{action}"
         )
+
+    @property
+    def _headers(self) -> dict[str, str]:
+        """En-tête d'authentification (obligatoire pour les clés AQ. d'AI Studio)."""
+        return {"x-goog-api-key": self.api_key, "Content-Type": "application/json"}
 
     def embed_documents(self, texts: Sequence[str]) -> list[list[float]]:
         if not self.ready:
@@ -185,7 +190,12 @@ class GeminiEmbedder(BaseEmbedder):
                         for text in batch
                     ]
                 }
-                response = client.post(self._endpoint("batchEmbedContents"), json=payload)
+                response = client.post(
+                    self._endpoint("batchEmbedContents"),
+                    params={"key": self.api_key},
+                    headers=self._headers,
+                    json=payload,
+                )
                 if response.status_code >= 400:
                     raise EmbeddingError(
                         f"Gemini embeddings ({response.status_code}) : {response.text[:200]}"
@@ -208,7 +218,12 @@ class GeminiEmbedder(BaseEmbedder):
             "taskType": "RETRIEVAL_QUERY",
         }
         with httpx.Client(timeout=self.timeout) as client:
-            response = client.post(self._endpoint("embedContent"), json=payload)
+            response = client.post(
+                self._endpoint("embedContent"),
+                params={"key": self.api_key},
+                headers=self._headers,
+                json=payload,
+            )
         if response.status_code >= 400:
             raise EmbeddingError(
                 f"Gemini embeddings ({response.status_code}) : {response.text[:200]}"

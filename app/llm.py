@@ -178,16 +178,26 @@ class GeminiLLM(BaseLLM):
         url = (
             f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         )
+        # Depuis 2026, Google AI Studio délivre des clés « Auth » (préfixe AQ.) qui
+        # DOIVENT être transmises dans l'en-tête x-goog-api-key. On envoie les deux
+        # formes (en-tête + ?key=) pour rester compatible avec les clés AIza…
+        headers = {"x-goog-api-key": self.api_key, "Content-Type": "application/json"}
         try:
             with httpx.Client(timeout=self.timeout) as client:
                 response = client.post(
-                    url, params={"key": self.api_key}, json=payload
+                    url, params={"key": self.api_key}, headers=headers, json=payload
                 )
         except httpx.HTTPError as exc:
             raise LLMError(f"Réseau indisponible vers Gemini : {exc}") from exc
 
         if response.status_code >= 400:
-            raise LLMError(f"Gemini ({response.status_code}) : {response.text[:300]}")
+            detail = response.text[:300]
+            if response.status_code in (400, 401, 403, 404):
+                detail += (
+                    " | Vérifiez la valeur de GEMINI_API_KEY : les nouvelles clés AI Studio"
+                    " (préfixe AQ.) ne doivent pas être entourées de guillemets ni d'espaces."
+                )
+            raise LLMError(f"Gemini ({response.status_code}) : {detail}")
         data = response.json()
         candidates = data.get("candidates") or []
         if not candidates:

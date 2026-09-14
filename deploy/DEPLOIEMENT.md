@@ -100,13 +100,32 @@ Sur GitHub, la racine du dépôt doit contenir : `app/`, `web/`, `knowledge/`, `
 
 1. Allez sur <https://aistudio.google.com/apikey> et connectez-vous avec un compte Google.
 2. Cliquez **Create API key** → **Create API key in new project**.
-3. Copiez la clé (elle commence par `AIza…`) et **gardez-la pour le § 4**.
+3. Donnez-lui un nom (ex. « Projet IA ») et **copiez la clé** affichée.
 
-> ⚠️ Ne collez jamais cette clé dans un fichier poussé sur GitHub. Elle ne doit vivre que
-> dans les variables d'environnement du service (étape 4.4) ou dans un fichier `.env` local
-> (déjà exclu par `.gitignore`).
+### 3.1 Les deux formats de clés (important)
 
----
+Google a changé le format de ses clés en 2026 :
+
+| Format | Aspect | Comment l'envoyer |
+| --- | --- | --- |
+| **Auth key** (nouvelles clés) | commence par **`AQ.`** | **en-tête HTTP `x-goog-api-key`** (obligatoire) |
+| Standard key (anciennes) | commence par `AIza…` | `?key=` dans l'URL |
+
+✅ **TradeVision IA gère les deux automatiquement** (il envoie l'en-tête *et* le paramètre
+`?key=`). Vous n'avez donc rien à configurer : copiez-collez la clé telle quelle.
+
+### 3.2 ⚠️ Règle de sécurité : une clé ne se partage jamais
+
+- Ne collez votre clé **que** dans les variables d'environnement de l'hébergeur
+  (ou dans un fichier `.env` local, déjà exclu par `.gitignore`).
+- **Ne la mettez jamais** dans un fichier poussé sur GitHub, dans une capture d'écran
+  publique, ni dans une conversation/chat : une clé publiée peut être utilisée par
+  n'importe qui et consommer votre quota.
+- Si une clé a été exposée : retournez sur <https://aistudio.google.com/apikey>,
+  cliquez sur **⋮ → Delete API key** (ou *Regenerate*), puis créez-en une nouvelle et
+  mettez à jour la variable chez l'hébergeur. Cela prend 30 secondes et annule le risque.
+- Vous pouvez restreindre la clé (bouton **Edit** / *Restrictions*) : limitation à l'API
+  Generative Language, ou restriction par site web/IP si votre hébergeur fournit une IP fixe.
 
 ## 4. Déployer sur Render (10 minutes)
 
@@ -139,21 +158,73 @@ Render). L'interface doit s'afficher avec la bannière « Mode démo actif ». T
 **« Exemple guidé (AAPL) »** : l'analyse doit produire un verdict, des niveaux, des figures et
 des extraits de cours.
 
-### 4.4 Ajouter vos variables (clé API, notifications…)
+### 4.4 Ajouter vos variables — pas-à-pas exact
 
-Onglet **Environment** du service → **Add Environment Variable** :
+C'est **l'étape qui active la vision et la rédaction par IA**. Elle se fait dans l'interface
+de Render, jamais dans le code.
 
-| Variable | Valeur | Effet |
+1. Ouvrez <https://dashboard.render.com> → cliquez sur votre service **tradevision-ia**.
+2. Dans le menu de gauche, cliquez sur **Environment**.
+3. Cliquez sur le bouton **+ Add Environment Variable** (ou *Add from .env* si vous préférez
+   coller un bloc). Trois lignes s'ajoutent une par une :
+
+   | Champ **Key** | Champ **Value** |
+   | --- | --- |
+   | `GEMINI_API_KEY` | votre clé copiée à l'étape 3 (elle commence par `AQ.` ou `AIza`) |
+   | `API_ACCESS_TOKEN` | un mot de passe long que **vous inventez** (voir ci-dessous) |
+   | `APP_BASE_URL` | l'URL de votre application, ex. `https://tradevision-ia.onrender.com` |
+
+4. Cliquez sur **Save Changes** (en haut à droite).
+5. Render redéploie automatiquement le service : l'indicateur *Deploying…* apparaît
+   (≈ 2 à 4 minutes). Attendez **Live**.
+
+**Détails sur chaque variable**
+
+- **`GEMINI_API_KEY`** — la seule variable indispensable pour l'IA. Valeur : la clé brute,
+  sans guillemets, sans espace avant/après, sans mot « Bearer ».
+  *Effet :* active la lecture d'image par IA, la rédaction des analyses et du chat.
+  *Coût :* offre gratuite de Google (quota généreux pour un usage personnel).
+- **`API_ACCESS_TOKEN`** — protection optionnelle mais recommandée dès que l'URL est publique.
+  Valeur : une chaîne aléatoire d'au moins 32 caractères. Pour la générer :
+  ```bash
+  openssl rand -hex 32        # Linux/macOS/Git Bash
+  ```
+  ou utilisez un gestionnaire de mots de passe (32+ caractères), ou la ligne de commande
+  Windows PowerShell : `-join ((1..32) | %{'{0:x}' -f (Get-Random -Max 16)})`.
+  *Effet :* tous les appels `/api/*` exigent l'en-tête `X-API-Token` (ou `?token=`).
+  ✅ **L'interface web continue de fonctionner** : le jeton lui est transmis automatiquement
+  par le serveur. Il s'agit d'une **protection légère** (elle bloque les scripts et les
+  robots qui découvrent votre URL) : toute personne ouvrant la page peut lire le jeton dans
+  le code source. Pour un usage strictement privé, rendez le service privé chez l'hébergeur
+  ou ajoutez une authentification complète.
+- **`APP_BASE_URL`** — purement cosmétique : cette URL est ajoutée en bas des messages
+  Telegram/webhook (« 🔗 https://… »), pour revenir à l'application en un clic. Facultative.
+
+**Variables utiles supplémentaires** (même procédure) :
+
+| Variable | Valeur conseillée | Effet |
 | --- | --- | --- |
-| `GEMINI_API_KEY` | `AIza…` | Active la lecture d'image et la rédaction par IA |
-| `API_ACCESS_TOKEN` | *(chaîne secrète de votre choix)* | Protège l'API `/api/*` |
-| `APP_BASE_URL` | `https://tradevision-ia.onrender.com` | Ajouté en bas des messages envoyés |
-| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | voir § 6 | Envoi des analyses sur Telegram |
-| `NOTIFY_ENABLED` | `true` | Active la veille automatique (si un canal est configuré) |
-| `WATCHLIST` | `AAPL,BTC-USD,^FCHI` | Marchés suivis |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | voir § 6 | Recevoir les analyses sur Telegram |
+| `NOTIFY_ENABLED` | `true` | Active la veille automatique |
+| `WATCHLIST` | `AAPL,BTC-USD,^FCHI` | Marchés suivis par la veille |
 | `EMBEDDING_PROVIDER` | `gemini` | Recherche sémantique de meilleure qualité (utilise la clé Gemini) |
+| `APP_NAME` | `Mon Analyse Trading IA` | Nom affiché dans l'interface |
 
-Cliquez **Save Changes** : Render redéploie automatiquement (≈ 3 min).
+> ⚠️ Chaque modification de variable déclenche un **redéploiement automatique** : c'est
+> normal, et c'est ce qui applique la nouvelle configuration.
+
+### 4.4 bis En local (facultatif) : le fichier `.env`
+
+Si vous lancez le projet sur votre machine, créez un fichier `.env` à la racine
+(**jamais poussé sur GitHub** — il est dans `.gitignore`) :
+
+```ini
+GEMINI_API_KEY=AQ.votre_cle_ici
+API_ACCESS_TOKEN=un_mot_de_passe_long_aleatoire
+APP_BASE_URL=http://localhost:8000
+```
+
+Puis relancez `python run.py`.
 
 ### 4.5 Vérifier l'état complet
 
@@ -167,7 +238,12 @@ Ouvrez `https://<votre-app>.onrender.com/api/health`. Vous devez voir :
   "veille": { "actif": true } }
 ```
 
-- `mode_demo: false` → la clé Gemini est bien prise en compte 🎉
+- `mode_demo: false` → la clé Gemini est bien prise en compte 🎉 (sinon, voir le § 9)
+
+**Vérification visuelle en 10 secondes** : dans l'application, la bannière jaune
+« Mode démo actif » doit avoir **disparu**, et l'en-tête doit afficher un badge vert
+« IA gemini ». Testez ensuite *Analyse* avec une capture de graphique : la réponse contient
+une section « Ce que l'IA voit sur l'image ».
 - `notifications.pret: true` → Telegram/webhook opérationnel
 - `veille.actif: true` → la veille tourne
 
@@ -303,6 +379,8 @@ Commandes : *build* `pip install -r requirements.txt`, *start* `python run.py`.
 | `Application failed to respond` au bout de 60 s | Plan gratuit réveillé / build incomplet | Attendez 1 min, rechargez ; vérifiez les *Logs* |
 | Toujours « Mode démo » après avoir mis la clé | Variable non enregistrée ou service non redéployé | Vérifiez `Environment`, puis *Manual Deploy → Deploy latest commit* |
 | `403` / erreur Gemini | Clé invalide, quota atteint ou région non autorisée | Régénérez la clé sur AI Studio ; testez `curl /api/health` |
+| Toujours « Mode démo » alors que la clé est saisie | Espace ou guillemets autour de la valeur, ou service non redéployé | Recopiez la clé sans guillemets ; `Save Changes` puis attendez l'état **Live** |
+| `401 Accès refusé` **dans l'interface web** après avoir mis `API_ACCESS_TOKEN` | Jeton non transmis | Rechargez la page (le jeton est injecté par le serveur) ; si le problème persiste, videz le cache du navigateur |
 | Données « démo » alors que le réseau marche | Yahoo/Stooq bloqués depuis l'hébergeur | `MARKET_PROVIDER=yahoo` ou `yfinance` après `pip install yfinance`, sinon acceptez le mode démo |
 | Documents perdus après un redémarrage | Disque éphémère du plan gratuit | Réimportez vos PDF, ou passez à un disque persistant payant, ou utilisez un stockage externe |
 | Aucun message Telegram | Le bot n'a jamais reçu `/start`, ou chat id erroné | Renvoyez `/start` au bot puis relisez `getUpdates` |

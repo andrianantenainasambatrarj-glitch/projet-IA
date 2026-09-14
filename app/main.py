@@ -157,6 +157,10 @@ def home(request: Request):
         "notify_interval": settings.notify_interval_minutes,
         "notify_min_score": settings.notify_min_score,
         "app_base_url": PUBLIC_BASE_URL,
+        # Jeton d'accès injecté dans la page : l'interface web reste fonctionnelle
+        # même quand API_ACCESS_TOKEN est défini (voir l'onglet Aide pour la portée
+        # exacte de cette protection).
+        "api_token": settings.api_access_token or "",
         "default_period": settings.default_period,
         "default_interval": settings.default_interval,
         "default_symbol": "AAPL",

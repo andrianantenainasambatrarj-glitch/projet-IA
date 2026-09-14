@@ -137,7 +137,7 @@ def test_historique_des_analyses(client):
     assert client.get(f"/api/reports/{identifiant}").status_code == 404
 
 
-def test_protection_par_jeton(client, monkeypatch):
+def test_protection_par_jeton(client):
     from app.config import get_settings
 
     settings = get_settings()
@@ -147,6 +147,22 @@ def test_protection_par_jeton(client, monkeypatch):
     assert client.get("/api/health", headers={"X-API-Token": "secret-test"}).status_code == 200
     assert client.get("/api/health", params={"token": "secret-test"}).status_code == 200
     assert client.get("/").status_code == 200  # l'interface reste publique
+
+    # L'interface web doit continuer de fonctionner : le jeton lui est transmis
+    # automatiquement (sinon tous les appels /api/* de la page échoueraient en 401).
+    page = client.get("/").text
+    assert "apiToken" in page
+    assert "secret-test" in page
+    assert 'apiToken: "secret-test"' in page
+
+    # ...et les liens d'export (qui n'envoient pas d'en-tête) utilisent ?token=
+    analyse = client.post(
+        "/api/analyze",
+        json={"symbol": "AAPL"},
+        headers={"X-API-Token": "secret-test"},
+    ).json()
+    export = client.get(f"/api/reports/{analyse['report_id']}/export?token=secret-test")
+    assert export.status_code == 200
 
     settings.api_access_token = ""
 

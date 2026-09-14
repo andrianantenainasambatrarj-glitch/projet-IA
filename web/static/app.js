@@ -35,8 +35,23 @@ function toast(message, kind = "info", delay = 5200) {
   setTimeout(() => el.remove(), delay);
 }
 
+/** Ajoute le jeton d'accès (si configuré) aux en-têtes d'une requête. */
+function withToken(options = {}) {
+  const opts = Object.assign({}, options);
+  if (APP.apiToken) {
+    opts.headers = Object.assign({}, opts.headers || {}, { "X-API-Token": APP.apiToken });
+  }
+  return opts;
+}
+
+/** Construit une URL d'API (avec ?token= pour les liens de téléchargement). */
+function apiUrl(path) {
+  if (!APP.apiToken) return path;
+  return path + (path.indexOf("?") === -1 ? "?" : "&") + "token=" + encodeURIComponent(APP.apiToken);
+}
+
 async function api(path, options = {}) {
-  const response = await fetch(path, options);
+  const response = await fetch(path, withToken(options));
   const text = await response.text();
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch (err) { data = { raw: text }; }
@@ -839,7 +854,7 @@ async function loadDocuments() {
         '<tr><td><b>' + esc(doc.title) + '</b><div class="small">' + esc(doc.source) + '</div></td>' +
         '<td>' + esc(doc.kind) + '</td><td class="mono">' + doc.chunk_count + '</td>' +
         '<td class="small">' + esc((doc.created_at || "").replace("T", " ").slice(0, 16)) + '</td>' +
-        '<td class="nowrap"><a class="btn ghost" href="/api/knowledge/' + doc.doc_id + '/export" target="_blank">JSON</a> ' +
+        '<td class="nowrap"><a class="btn ghost" href="' + apiUrl("/api/knowledge/" + doc.doc_id + "/export") + '" target="_blank">JSON</a> ' +
         '<button class="btn ghost danger" data-doc="' + doc.doc_id + '">Supprimer</button></td></tr>').join("") +
       '</tbody></table>';
 
@@ -964,7 +979,7 @@ async function loadReports() {
         '<td class="mono">' + Number(r.score || 0).toFixed(1) + '</td>' +
         '<td class="small">' + esc(r.mode) + '</td>' +
         '<td class="nowrap"><button class="btn ghost" data-view="' + r.report_id + '">Ouvrir</button> ' +
-        '<a class="btn ghost" href="/api/reports/' + r.report_id + '/export" target="_blank">Markdown</a> ' +
+        '<a class="btn ghost" href="' + apiUrl("/api/reports/" + r.report_id + "/export") + '" target="_blank">Markdown</a> ' +
         '<button class="btn ghost danger" data-del="' + r.report_id + '">Supprimer</button></td></tr>').join("") +
       '</tbody></table>';
 

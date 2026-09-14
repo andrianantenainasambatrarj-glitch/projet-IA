@@ -102,3 +102,108 @@ def test_guess_symbol(settings):
     assert guess_symbol("Symbole estimé : BTC-USD (unité de temps D1)") == "BTC-USD"
     assert guess_symbol("On voit un graphique en D1 sans symbole lisible") == ""
     assert guess_symbol("indice ^FCHI sur 6 mois") == "^FCHI"
+
+
+# --------------------------------------------------------------------- #
+#  Compatibilité des clés Gemini du nouveau format « Auth » (préfixe AQ.)
+# --------------------------------------------------------------------- #
+
+class _FauxReponse:
+    status_code = 200
+
+    def __init__(self, payload):
+        self._payload = payload
+
+    def json(self):
+        return self._payload
+
+
+class _FauxClient:
+    """Client httpx factice : enregistre les appels au lieu de partir sur le réseau."""
+
+    appels: list = []
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def post(self, url, **kwargs):
+        _FauxClient.appels.append({"url": url, **kwargs})
+        if "batchEmbedContents" in url:
+            return _FauxReponse({"embeddings": [{"values": [0.1, 0.2, 0.3]}]})
+        if ":embedContent" in url:
+            return _FauxReponse({"embedding": {"values": [0.1, 0.2, 0.3]}})
+        return _FauxReponse(
+            {
+                "candidates": [{"content": {"parts": [{"text": "ok"}]}}],
+                "usageMetadata": {},
+            }
+        )
+
+
+def test_cle_gemini_nouveau_format_envoyee_dans_l_en_tete(monkeypatch):
+    """Les clés AQ. (AI Studio 2026) exigent l'en-tête x-goog-api-key, pas ?key=."""
+    from app import llm as module_llm
+
+    _FauxClient.appels = []
+    monkeypatch.setattr(module_llm.httpx, "Client", _FauxClient)
+
+    cle = "AQ.Ab8RN6Jqj2epTjl7UtMbfNxC_exemple_de_cle"
+    client = module_llm.GeminiLLM(cle, vision_model="gemini-2.5-flash")
+    reponse = client.generate(
+        system="system", messages=[{"role": "user", "content": "bonjour"}], images=[], use_vision=False
+    )
+
+    assert reponse.text == "ok"
+    appel = _FauxClient.appels[-1]
+    assert appel["headers"]["x-goog-api-key"] == cle, "l'en-tête d'authentification est obligatoire"
+    assert appel["params"]["key"] == cle, "l'ancien format (AIza…) reste supporté en parallèle"
+
+
+def test_embeddings_gemini_utilisent_le_meme_en_tete(monkeypatch):
+    from app import embeddings as module_embeddings
+
+    _FauxClient.appels = []
+    monkeypatch.setattr(module_embeddings.httpx, "Client", _FauxClient)
+
+    cle = "AQ.Ab8RN6Jqj2epTjl7UtMbfNxC_exemple_de_cle"
+    embedder = module_embeddings.GeminiEmbedder(cle)
+
+    vecteurs = embedder.embed_documents(["un texte"])
+    assert vecteurs
+    appel = _FauxClient.appels[-1]
+    assert appel["headers"]["x-goog-api-key"] == cle
+    assert "?key=" not in appel["url"]
+
+    _FauxClient.appels = []
+    embedder.embed_query("une question")
+    assert _FauxClient.appels[-1]["headers"]["x-goog-api-key"] == cle
+
+
+def test_message_d_erreur_explique_les_cles_invalides(monkeypatch):
+    from app import llm as module_llm
+
+    class _ClientRefus(_FauxClient):
+        def post(self, url, **kwargs):
+            return _FauxReponsePasOk()
+
+    class _FauxReponsePasOk:
+        status_code = 404
+        text = "models/gemini-2.5-flash is not found"
+
+    monkeypatch.setattr(module_llm.httpx, "Client", _ClientRefus)
+    client = module_llm.GeminiLLM("AQ.cleFausse")
+
+    try:
+        client.generate(system="s", messages=[{"role": "user", "content": "x"}], images=[])
+    except module_llm.LLMError as exc:
+        message = str(exc)
+        assert "GEMINI_API_KEY" in message
+        assert "AQ." in message
+    else:
+        raise AssertionError("une LLMError était attendue")

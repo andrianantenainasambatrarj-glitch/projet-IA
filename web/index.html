@@ -408,6 +408,11 @@
           signalées.</li>
         <li>Les embeddings par défaut (hachage local) sont légers : pour une recherche sémantique
           plus fine, utilisez un fournisseur d'embeddings API ou <span class="mono">sentence-transformers</span>.</li>
+        <li>Si <span class="mono">API_ACCESS_TOKEN</span> est défini, les appels <span class="mono">/api/*</span>
+          exigent l'en-tête <span class="mono">X-API-Token</span>. Cette interface fonctionne (le jeton lui est
+          transmis automatiquement), mais il s'agit d'une protection légère : toute personne ayant accès à la page
+          peut lire le jeton dans le code source. Pour un usage strictement privé, rendez le service privé ou
+          gérez une authentification complète.</li>
       </ul>
 
       <details class="disclaimer">
@@ -447,7 +452,8 @@
     notifications: {{ notifications | tojson }},
     veille: {{ veille | tojson }},
     notifyEnabled: {{ notify_enabled | tojson }},
-    appBaseUrl: {{ app_base_url | tojson }}
+    appBaseUrl: {{ app_base_url | tojson }},
+    apiToken: {{ api_token | tojson }}
   };
 </script>
 <script src="/static/app.js"></script>

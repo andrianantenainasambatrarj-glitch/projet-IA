@@ -112,8 +112,13 @@ Interface : <http://localhost:8000> · API : <http://localhost:8000/api/docs>
 2. Créez un compte sur <https://render.com> (connexion GitHub).
 3. **New + → Blueprint** → sélectionnez le dépôt : `render.yaml` configure tout
    automatiquement (build, démarrage, sonde de santé `/healthz`, plan *Free*).
-4. Onglet **Environment** → ajoutez vos variables : `GEMINI_API_KEY` (clé gratuite
-   <https://aistudio.google.com/apikey>), `API_ACCESS_TOKEN`, `TELEGRAM_BOT_TOKEN`…
+4. Onglet **Environment** → **+ Add Environment Variable**, puis :
+   - `GEMINI_API_KEY` = votre clé gratuite (<https://aistudio.google.com/apikey>) ;
+     les deux formats sont gérés (`AQ.…` nouvelles clés *Auth*, `AIza…` anciennes) ;
+   - `API_ACCESS_TOKEN` = une chaîne aléatoire de 32+ caractères (`openssl rand -hex 32`) :
+     protège l'API sans casser l'interface web (le jeton lui est transmis automatiquement) ;
+   - `APP_BASE_URL` = `https://<votre-service>.onrender.com` (lien ajouté aux notifications).
+   Cliquez **Save Changes** : le service redéploie automatiquement.
 5. Ouvrez l'URL `https://<votre-service>.onrender.com` et vérifiez `/api/health`.
 
 Limites du plan gratuit (et comment les gérer) : mise en veille après 15 min d'inactivité
@@ -122,6 +127,9 @@ Limites du plan gratuit (et comment les gérer) : mise en veille après 15 min d
 au démarrage ; réimportez vos PDF après un redémarrage, ou activez un disque persistant),
 et pas de cron job (utilisez un cron externe qui appelle
 `POST /api/notifications/watchlist`).
+
+> 🔐 **Votre clé API ne doit jamais être publiée** (GitHub, capture, chat) : en cas
+> d'exposition, supprimez-la sur AI Studio et créez-en une nouvelle (30 secondes).
 
 ### Option B — Hugging Face Spaces (nécessite le plan PRO)
 
@@ -161,7 +169,7 @@ docker run -p 7860:7860 -e GEMINI_API_KEY=xxx -v tradevision-data:/data tradevis
 
 | Fournisseur | Variable | Modèle par défaut | Notes |
 | --- | --- | --- | --- |
-| **Google Gemini** ⭐ | `GEMINI_API_KEY` | `gemini-2.5-flash` | Clé gratuite, vision + texte, excellent rapport qualité/prix |
+| **Google Gemini** ⭐ | `GEMINI_API_KEY` | `gemini-2.5-flash` | Clé gratuite, vision + texte ; clés `AQ.` (Auth, en-tête `x-goog-api-key`) et `AIza…` supportées |
 | OpenAI | `OPENAI_API_KEY` | `gpt-4o-mini` | `OPENAI_BASE_URL` pour tout endpoint compatible |
 | Anthropic | `ANTHROPIC_API_KEY` | `claude-sonnet-4-5` | Vision + texte |
 | OpenRouter | `OPENROUTER_API_KEY` | modèles gratuits | Accès à de nombreux modèles |
