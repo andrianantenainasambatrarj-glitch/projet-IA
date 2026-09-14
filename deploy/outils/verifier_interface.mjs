@@ -98,6 +98,7 @@ cliquer("#btn-analyse");
 await attendre(2500);
 verifier("verdict affiché", texte("#verdict").length > 20, texte("#verdict"));
 verifier("conclusion rendue", texte("#answer").length > 50, texte("#answer"));
+verifier("facteurs du score expliqués", texte("#factors").length > 20, texte("#factors"));
 verifier("sources de cours affichées", texte("#sources").length > 10, texte("#sources"));
 verifier("bouton d'analyse réutilisable",
   /Analyser et prédire/.test(texte("#btn-analyse")) && !doc.querySelector("#btn-analyse").disabled,

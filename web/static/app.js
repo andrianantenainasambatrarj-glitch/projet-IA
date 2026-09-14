@@ -409,11 +409,23 @@ function renderSources(sources, cible) {
   }).join("");
 }
 
+function renderFactors(analysis) {
+  const box = $("#factors");
+  if (!box) return;
+  const indicateurs = (analysis && analysis.indicators) || {};
+  const notes = Array.isArray(indicateurs.score_notes) ? indicateurs.score_notes.slice() : [];
+  if (analysis && analysis.setup && analysis.setup.note) notes.push(analysis.setup.note);
+  box.innerHTML = notes.length
+    ? notes.map((n) => "<li>" + esc(String(n)) + "</li>").join("")
+    : '<li class="muted">Indicateurs neutres : aucun facteur ne pèse sur le score.</li>';
+}
+
 function renderAnalysis(payload) {
   state.lastResult = payload;
   state.lastReportId = payload.report_id || "";
   const analysis = payload.analysis;
   renderVerdict(analysis);
+  renderFactors(analysis);
   renderLevels(analysis);
   renderPatterns(analysis);
   renderSources(payload.sources);

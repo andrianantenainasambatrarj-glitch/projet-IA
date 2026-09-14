@@ -445,6 +445,15 @@ table.data tbody tr:hover td { background: var(--accent-soft); }
 .stat .value { font-size: 18px; font-weight: 650; }
 
 /* -------------------------------------------------------------- sources */
+/* Liste d'explications (facteurs du score) : puces colorées, texte lisible */
+.notes { margin: 4px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.notes li { position: relative; padding-left: 20px; font-size: 13.5px; color: var(--text-dim); line-height: 1.5; }
+.notes li::before {
+  content: ""; position: absolute; left: 4px; top: 7px; width: 7px; height: 7px;
+  border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.notes li.muted::before { background: var(--text-mute); box-shadow: none; }
+
 .sources { display: grid; gap: 10px; }
 .source {
   border: 1px solid var(--border-soft); border-radius: var(--radius-md);
