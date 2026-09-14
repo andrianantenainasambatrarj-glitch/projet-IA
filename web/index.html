@@ -43,6 +43,7 @@
     <button data-tab="tab-chat">💬 Chat sur mes cours</button>
     <button data-tab="tab-connaissances">📚 Base de connaissances</button>
     <button data-tab="tab-historique">🗂️ Historique</button>
+    <button data-tab="tab-notifications">🔔 Alertes &amp; veille</button>
     <button data-tab="tab-aide">❓ Aide</button>
   </nav>
 
@@ -86,13 +87,31 @@
       </form>
 
       <label class="field">
-        <span>Capture du graphique (optionnel, PNG/JPG — max {{ max_upload_mb }} Mo)</span>
+        <span>Joindre un élément à l'analyse (glisser-déposer ou clic — max {{ max_upload_mb }} Mo)</span>
       </label>
+      <div class="flex" style="margin-bottom:10px">
+        <button type="button" class="btn primary" id="dz-mode-image">🖼️ Capture de graphique</button>
+        <button type="button" class="btn" id="dz-mode-doc">📄 Cours (PDF / note)</button>
+        <span class="small" id="dz-help">
+          Une capture active la lecture d'image par IA et l'analyse croisée avec les données réelles.
+        </span>
+      </div>
+
       <div class="dropzone" id="dropzone">
         <b>Cliquez ou glissez-déposez une capture de graphique</b>
-        <div class="small">TrainingView, MT4/MT5, TradingView, capture d'écran… (analyse d'image par IA si clé LLM configurée)</div>
+        <div class="small">TradingView, MT4/MT5, capture d'écran… — l'IA décrit la figure, les niveaux et l'unité de temps</div>
         <input type="file" id="image-input" accept="image/*" style="display:none">
       </div>
+
+      <div class="dropzone" id="dropzone-doc" style="display:none">
+        <b>Cliquez ou glissez-déposez vos cours (PDF, Markdown, texte)</b>
+        <div class="small">
+          Le document est découpé, indexé dans votre base de connaissances, puis l'analyse est lancée
+          immédiatement en s'appuyant dessus (citations [Source n]).
+        </div>
+        <input type="file" id="doc-input" multiple accept=".pdf,.md,.markdown,.txt,.text,.rst" style="display:none">
+      </div>
+      <p class="small" id="doc-status"></p>
 
       <label class="field mt">
         <span>Votre question (optionnel)</span>
@@ -113,6 +132,11 @@
       <div class="flex" id="meta" style="margin-bottom:14px"></div>
       <div class="verdict" id="verdict"></div>
       <div id="warnings"></div>
+
+      <div class="btn-row" style="margin:6px 0 14px">
+        <button class="btn" id="btn-send-notif">🔔 M'envoyer cette analyse</button>
+        <span class="small" id="notif-hint"></span>
+      </div>
 
       <h3>Conclusion détaillée</h3>
       <div class="md" id="answer"></div>
@@ -249,6 +273,81 @@
     </div>
   </section>
 
+  <!-- =============================================== NOTIFICATIONS ===== -->
+  <section class="tab-panel" id="tab-notifications">
+    <div class="card">
+      <h2>Alertes Telegram &amp; veille automatique</h2>
+      <p class="hint">
+        Recevez vos analyses directement sur votre téléphone (Telegram, gratuit) ou sur un
+        webhook (Discord, Slack, ntfy, Zapier…). La <b>veille automatique</b> analyse votre
+        liste de marchés à intervalle régulier et n'envoie que les situations qui dépassent
+        votre seuil de score.
+      </p>
+
+      <div class="flex" id="notif-status"></div>
+
+      <h3>1. Tester la connexion</h3>
+      <div class="btn-row">
+        <button class="btn" id="btn-notif-test">Envoyer un message de test</button>
+        <span class="small">Nécessite un jeton de bot Telegram ou une URL de webhook (voir l'aide ci-dessous).</span>
+      </div>
+
+      <h3>2. Analyser un marché et envoyer le résultat</h3>
+      <form id="form-notif-analysis" class="flex">
+        <input type="text" id="notif-symbol" placeholder="Symbole (ex : AAPL, BTC-USD, ^FCHI)" style="max-width:230px">
+        <select id="notif-interval" style="max-width:150px">
+          {% for key, label in intervalles.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+        </select>
+        <input type="text" id="notif-question" placeholder="Question (optionnel)" style="flex:1 1 260px">
+        <button class="btn primary" id="btn-notif-analysis">Analyser et envoyer</button>
+      </form>
+
+      <h3>3. Veille automatique de ma watchlist</h3>
+      <div class="grid cols-2">
+        <label class="field">
+          <span>Marchés suivis (séparés par des virgules)</span>
+          <input type="text" id="veille-watchlist" value="{{ watchlist }}" placeholder="AAPL,BTC-USD,^FCHI,EURUSD=X">
+        </label>
+        <div class="flex">
+          <label class="field" style="flex:1 1 150px">
+            <span>Intervalle (minutes)</span>
+            <input type="number" id="veille-interval" value="{{ notify_interval }}" min="5" max="10080">
+          </label>
+          <label class="field" style="flex:1 1 150px">
+            <span>Seuil de score (|score| ≥)</span>
+            <input type="number" id="veille-score" value="{{ notify_min_score }}" min="-100" max="100" step="5">
+          </label>
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn primary" id="btn-veille-start">Démarrer la veille</button>
+        <button class="btn" id="btn-veille-scan">Lancer un scan maintenant</button>
+        <button class="btn danger" id="btn-veille-stop">Arrêter la veille</button>
+      </div>
+      <div id="veille-etat" class="mt"></div>
+
+      <h3>Comment configurer Telegram (gratuit, 3 minutes)</h3>
+      <ol>
+        <li>Ouvrez Telegram, cherchez <span class="mono">@BotFather</span> et envoyez
+          <span class="mono">/newbot</span>. Choisissez un nom, puis copiez le
+          <b>jeton</b> fourni (forme <span class="mono">123456:ABC-DEF…</span>).</li>
+        <li>Cherchez votre nouveau bot et envoyez-lui <span class="mono">/start</span>
+          (obligatoire : un bot ne peut pas écrire le premier).</li>
+        <li>Récupérez votre <b>chat id</b> : ouvrez
+          <span class="mono">https://api.telegram.org/bot&lt;JETON&gt;/getUpdates</span>
+          dans un navigateur et lisez <span class="mono">result[0].message.chat.id</span>.</li>
+        <li>Sur votre hébergement, ajoutez les variables
+          <span class="mono">TELEGRAM_BOT_TOKEN</span> et <span class="mono">TELEGRAM_CHAT_ID</span>
+          (et <span class="mono">NOTIFY_ENABLED=true</span> pour la veille), puis redémarrez.</li>
+      </ol>
+      <p class="hint">
+        Alternative sans Telegram : <span class="mono">NOTIFY_WEBHOOK_URL</span> (Discord :
+        Paramètres du salon → Intégrations → Webhooks → copier l'URL ; ntfy :
+        <span class="mono">https://ntfy.sh/votre-sujet</span>).
+      </p>
+    </div>
+  </section>
+
   <!-- ====================================================== AIDE ======== -->
   <section class="tab-panel" id="tab-aide">
     <div class="card">
@@ -281,6 +380,9 @@
           <tr><td class="mono">GET</td><td class="mono">/api/knowledge</td><td>Documents indexés et statistiques</td></tr>
           <tr><td class="mono">POST</td><td class="mono">/api/knowledge/upload</td><td>Import de PDF/notes</td></tr>
           <tr><td class="mono">GET</td><td class="mono">/api/reports</td><td>Historique des analyses</td></tr>
+          <tr><td class="mono">POST</td><td class="mono">/api/notifications/analysis</td><td>Analyser un symbole et l'envoyer (Telegram/webhook)</td></tr>
+          <tr><td class="mono">POST</td><td class="mono">/api/notifications/watchlist</td><td>Scan de la watchlist puis envoi du résumé</td></tr>
+          <tr><td class="mono">POST</td><td class="mono">/api/notifications/veille/start</td><td>Démarrer la veille automatique</td></tr>
           <tr><td class="mono">GET</td><td class="mono">/api/health</td><td>Diagnostic (LLM, marché, index)</td></tr>
         </tbody>
       </table>
@@ -341,7 +443,11 @@
     maxUploadMb: {{ max_upload_mb | tojson }},
     chunks: {{ connaissances.chunks | tojson }},
     documents: {{ connaissances.documents | tojson }},
-    showKbHint: false
+    showKbHint: false,
+    notifications: {{ notifications | tojson }},
+    veille: {{ veille | tojson }},
+    notifyEnabled: {{ notify_enabled | tojson }},
+    appBaseUrl: {{ app_base_url | tojson }}
   };
 </script>
 <script src="/static/app.js"></script>

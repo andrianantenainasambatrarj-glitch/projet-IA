@@ -160,6 +160,7 @@ function initTabs() {
       if (button.dataset.tab === "tab-graphique") drawChart();
       if (button.dataset.tab === "tab-connaissances") loadDocuments();
       if (button.dataset.tab === "tab-historique") loadReports();
+      if (button.dataset.tab === "tab-notifications") loadNotifyStatus();
     });
   });
 }
@@ -174,6 +175,8 @@ const state = {
   chart: null,
   lastResult: null,
   imageDataUrl: "",
+  docFiles: [],
+  docUploaded: false,
 };
 
 function verdictClass(score) {
@@ -304,6 +307,16 @@ async function runAnalyse(event) {
   }
   setBusy(button, true, "Analyse en cours…");
   try {
+    // 1) Les documents joints (PDF/notes) sont d'abord indexés dans la base de
+    //    connaissances : l'analyse RAG les utilisera immédiatement.
+    if (state.docFiles.length && !state.docUploaded) {
+      setBusy(button, true, "Indexation des documents…");
+      const ok = await uploadPendingDocuments();
+      if (!ok) { setBusy(button, false); return; }
+      setBusy(button, true, "Analyse en cours…");
+    }
+
+    // 2) Analyse (symbole et/ou capture d'écran)
     const payload = await api("/api/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -328,6 +341,32 @@ function initAnalyse() {
   $("#period").value = state.period;
   $("#interval").value = state.interval;
 
+  /* ------------------------------------------------ bascule capture / cours */
+  const modes = {
+    image: {
+      bouton: $("#dz-mode-image"),
+      zone: $("#dropzone"),
+      aide: "Une capture active la lecture d'image par IA et l'analyse croisée avec les données réelles.",
+    },
+    doc: {
+      bouton: $("#dz-mode-doc"),
+      zone: $("#dropzone-doc"),
+      aide: "Le document est indexé puis l'analyse s'appuie dessus avec des citations [Source n].",
+    },
+  };
+
+  const activerMode = (nom) => {
+    Object.keys(modes).forEach((cle) => {
+      const actif = cle === nom;
+      modes[cle].bouton.className = "btn" + (actif ? " primary" : "");
+      modes[cle].zone.style.display = actif ? "" : "none";
+    });
+    $("#dz-help").textContent = modes[nom].aide;
+  };
+  modes.image.bouton.addEventListener("click", () => activerMode("image"));
+  modes.doc.bouton.addEventListener("click", () => activerMode("doc"));
+
+  /* ------------------------------------------------------- capture d'image */
   const dropzone = $("#dropzone");
   const input = $("#image-input");
 
@@ -348,14 +387,53 @@ function initAnalyse() {
 
   dropzone.addEventListener("click", () => input.click());
   input.addEventListener("change", () => applyFile(input.files[0]));
-  ["dragenter", "dragover"].forEach((evt) => dropzone.addEventListener(evt, (e) => {
-    e.preventDefault(); dropzone.classList.add("dragover");
-  }));
-  ["dragleave", "drop"].forEach((evt) => dropzone.addEventListener(evt, (e) => {
-    e.preventDefault(); dropzone.classList.remove("dragover");
-  }));
-  dropzone.addEventListener("drop", (e) => {
-    if (e.dataTransfer && e.dataTransfer.files.length) applyFile(e.dataTransfer.files[0]);
+
+  /* --------------------------------------------- cours : PDF / notes glissés */
+  const dropzoneDoc = $("#dropzone-doc");
+  const inputDoc = $("#doc-input");
+  const EXTENSIONS = [".pdf", ".md", ".markdown", ".txt", ".text", ".rst"];
+
+  const applyDocs = (fileList) => {
+    const fichiers = Array.prototype.slice.call(fileList || []);
+    if (!fichiers.length) return;
+    const rejetes = fichiers.filter((f) => {
+      const nom = (f.name || "").toLowerCase();
+      return !EXTENSIONS.some((ext) => nom.endsWith(ext));
+    });
+    if (rejetes.length) {
+      toast("Format non supporté : " + esc(rejetes.map((f) => f.name).join(", ")) +
+        " (PDF, .md, .txt attendus).", "err", 8000);
+    }
+    const acceptes = fichiers.filter((f) => EXTENSIONS.some((ext) => (f.name || "").toLowerCase().endsWith(ext)));
+    if (!acceptes.length) return;
+    state.docFiles = acceptes;
+    state.docUploaded = false;
+    dropzoneDoc.innerHTML = '<b>' + acceptes.length + ' document(s) prêt(s)</b>' +
+      '<div class="small">' + esc(acceptes.map((f) => f.name).join(', ')) +
+      ' — cliquez pour remplacer</div>' +
+      '<div class="small">Ils seront indexés automatiquement puis utilisés par l\'analyse.</div>' +
+      '<input type="file" id="doc-input" multiple accept=".pdf,.md,.markdown,.txt,.text,.rst" style="display:none">';
+    const nouvelInput = dropzoneDoc.querySelector("#doc-input");
+    nouvelInput.addEventListener("change", () => applyDocs(nouvelInput.files));
+    $("#doc-status").textContent = "Prêt à indexer : cliquez sur « Analyser et prédire ».";
+  };
+
+  dropzoneDoc.addEventListener("click", () => dropzoneDoc.querySelector("#doc-input").click());
+  inputDoc.addEventListener("change", () => applyDocs(inputDoc.files));
+
+  /* --------------------------------------------------------- glisser-déposer */
+  [dropzone, dropzoneDoc].forEach((zone) => {
+    ["dragenter", "dragover"].forEach((evt) => zone.addEventListener(evt, (e) => {
+      e.preventDefault(); zone.classList.add("dragover");
+    }));
+    ["dragleave", "drop"].forEach((evt) => zone.addEventListener(evt, (e) => {
+      e.preventDefault(); zone.classList.remove("dragover");
+    }));
+    zone.addEventListener("drop", (e) => {
+      if (!e.dataTransfer || !e.dataTransfer.files.length) return;
+      if (zone === dropzoneDoc) applyDocs(e.dataTransfer.files);
+      else applyFile(e.dataTransfer.files[0]);
+    });
   });
 
   $("#btn-demo").addEventListener("click", () => {
@@ -365,6 +443,40 @@ function initAnalyse() {
     $("#interval").value = "1d";
     runAnalyse();
   });
+}
+
+/**
+ * Indexe les documents joints à l'analyse (glisser-déposer depuis l'onglet Analyse).
+ * Renvoie true si l'indexation a réussi (ou s'il n'y avait rien à indexer).
+ */
+async function uploadPendingDocuments() {
+  if (!state.docFiles.length || state.docUploaded) return true;
+  const statut = $("#doc-status");
+  statut.innerHTML = '<span class="spinner"></span> Indexation de ' + state.docFiles.length + ' document(s)…';
+  const form = new FormData();
+  state.docFiles.forEach((file) => form.append("files", file));
+  try {
+    const payload = await api("/api/knowledge/upload", { method: "POST", body: form });
+    const resultats = payload.resultats || [];
+    const ok = resultats.filter((r) => r.status !== "error");
+    const ko = resultats.filter((r) => r.status === "error");
+    ko.forEach((r) => toast(esc(r.source) + " : " + esc(r.error), "err", 9000));
+    if (!ok.length) {
+      statut.innerHTML = '<span class="badge err">Indexation impossible</span>';
+      return false;
+    }
+    const extraits = ok.reduce((total, r) => total + (r.chunks || 0), 0);
+    state.docUploaded = true;
+    statut.innerHTML = '<span class="badge ok">' + ok.length + ' document(s) indexé(s) — ' +
+      extraits + ' extraits ajoutés à votre base de connaissances</span>' +
+      (ko.length ? ' <span class="badge warn">' + ko.length + ' en erreur</span>' : '');
+    toast(ok.length + " document(s) indexé(s) (" + extraits + " extraits) : l'analyse va s'appuyer dessus.", "ok", 7000);
+    return true;
+  } catch (err) {
+    statut.innerHTML = '<span class="badge err">Indexation impossible : ' + esc(err.message) + '</span>';
+    toast("Indexation impossible : " + esc(err.message), "err", 9000);
+    return false;
+  }
 }
 
 /* ----------------------------------------------------------------- graphique */
@@ -898,6 +1010,175 @@ async function openReport(reportId) {
   }
 }
 
+
+/* ---------------------------------------------------------- notifications */
+
+function renderNotifyStatus(payload) {
+  const notif = (payload && payload.notifications) || {};
+  const veille = (payload && payload.veille) || {};
+  const badges = [];
+  badges.push(notif.pret
+    ? '<span class="badge ok">Canaux : ' + esc(notif.canaux) + '</span>'
+    : '<span class="badge warn">Aucun canal configuré</span>');
+  badges.push(veille.actif
+    ? '<span class="badge ok">Veille active (toutes les ' + esc(veille.intervalle_minutes || "?") + ' min)</span>'
+    : '<span class="badge">Veille inactive</span>');
+  if (notif.watchlist && notif.watchlist.length) {
+    badges.push('<span class="badge info">' + notif.watchlist.length + ' marché(s) suivi(s)</span>');
+  }
+  $("#notif-status").innerHTML = badges.join(" ");
+
+  if (!notif.pret) {
+    $("#veille-etat").innerHTML = '<div class="banner">⚙️ ' + esc(notif.aide || "") + '</div>';
+  } else if (veille.actif) {
+    $("#veille-etat").innerHTML = '<div class="source"><div class="head"><b>Derniers passages</b>' +
+      '<span>' + esc(veille.passages || 0) + ' passage(s)</span></div><pre>' + esc(JSON.stringify({
+        démarrage: veille.demarre_le || "—",
+        dernier_passage: veille.dernier_passage || "—",
+        dernier_resultat: veille.dernier_resultat || {},
+        derniere_erreur: veille.derniere_erreur || "",
+        canaux: veille.canaux || "",
+        watchlist: veille.watchlist || [],
+      }, null, 2)) + '</pre></div>';
+  } else {
+    $("#veille-etat").innerHTML = '<div class="empty">Veille inactive' +
+      (veille.raison ? " — " + esc(veille.raison) : "") + '</div>';
+  }
+  $("#notif-hint").textContent = notif.pret
+    ? "Envoi via " + notif.canaux
+    : "Configurez Telegram ou un webhook dans l'onglet « Alertes & veille ».";
+}
+
+async function loadNotifyStatus() {
+  try {
+    renderNotifyStatus(await api("/api/notifications"));
+  } catch (err) {
+    $("#notif-status").innerHTML = '<span class="badge err">État indisponible : ' + esc(err.message) + '</span>';
+  }
+}
+
+function initNotifications() {
+  $("#btn-notif-test").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    setBusy(button, true, "Envoi…");
+    try {
+      const payload = await api("/api/notifications/test", { method: "POST" });
+      const envoye = payload.resultats.some((r) => r.statut === "envoye");
+      toast(envoye ? "Message de test envoyé (" + esc(payload.canaux) + ")."
+                   : "Envoi impossible : " + esc(payload.resultats.map((r) => r.detail).join(" ; ")),
+        envoye ? "ok" : "err", 8000);
+      loadNotifyStatus();
+    } catch (err) {
+      toast("Test impossible : " + esc(err.message), "err");
+    } finally { setBusy(button, false); }
+  });
+
+  $("#form-notif-analysis").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const symbol = $("#notif-symbol").value.trim().toUpperCase();
+    if (!symbol) { toast("Indiquez un symbole.", "warn"); return; }
+    const button = $("#btn-notif-analysis");
+    setBusy(button, true, "Analyse + envoi…");
+    try {
+      const payload = await api("/api/notifications/analysis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          symbol: symbol,
+          interval: $("#notif-interval").value,
+          question: $("#notif-question").value.trim(),
+        }),
+      });
+      toast(payload.envoye
+        ? "Analyse de " + esc(payload.symbol) + " envoyée via " + esc(payload.canaux) + "."
+        : "Analyse calculée mais non envoyée : " + esc((payload.resultats || []).map((r) => r.detail).join(" ; ")),
+        payload.envoye ? "ok" : "warn", 8000);
+    } catch (err) {
+      toast("Analyse impossible : " + esc(err.message), "err");
+    } finally { setBusy(button, false); }
+  });
+
+  $("#btn-veille-scan").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    setBusy(button, true, "Scan de la watchlist…");
+    try {
+      const payload = await api("/api/notifications/watchlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          watchlist: $("#veille-watchlist").value.trim(),
+          interval_minutes: Number($("#veille-interval").value || 240),
+          min_score: Number($("#veille-score").value || 0),
+          start: false,
+        }),
+      });
+      toast("Scan terminé : " + payload.symboles_analyses + " marché(s) analysé(s), " +
+        payload.symboles_retenus + " retenu(s)" + (payload.envoye ? ", résumé envoyé." : "."),
+        payload.envoye ? "ok" : "warn", 8000);
+      loadNotifyStatus();
+    } catch (err) {
+      toast("Scan impossible : " + esc(err.message), "err");
+    } finally { setBusy(button, false); }
+  });
+
+  $("#btn-veille-start").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    setBusy(button, true, "Démarrage…");
+    try {
+      const payload = await api("/api/notifications/veille/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          watchlist: $("#veille-watchlist").value.trim(),
+          interval_minutes: Number($("#veille-interval").value || 240),
+          min_score: Number($("#veille-score").value || 0),
+          start: true,
+        }),
+      });
+      toast(payload.demarree ? "Veille démarrée." : "Veille non démarrée : " + esc((payload.notifications || {}).aide || ""),
+        payload.demarree ? "ok" : "warn", 9000);
+      renderNotifyStatus(payload);
+    } catch (err) {
+      toast("Démarrage impossible : " + esc(err.message), "err");
+    } finally { setBusy(button, false); }
+  });
+
+  $("#btn-veille-stop").addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    setBusy(button, true, "Arrêt…");
+    try {
+      await api("/api/notifications/veille/stop", { method: "POST" });
+      toast("Veille arrêtée.", "ok");
+      loadNotifyStatus();
+    } catch (err) {
+      toast("Arrêt impossible : " + esc(err.message), "err");
+    } finally { setBusy(button, false); }
+  });
+
+  $("#btn-send-notif").addEventListener("click", async (event) => {
+    const payload = state.lastResult;
+    if (!payload || !payload.report_id) {
+      toast("Lancez d'abord une analyse.", "warn");
+      return;
+    }
+    const button = event.currentTarget;
+    setBusy(button, true, "Envoi…");
+    try {
+      const result = await api("/api/notifications/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ report_id: payload.report_id, base_url: APP.appBaseUrl || "" }),
+      });
+      toast(result.succes
+        ? "Analyse envoyée via " + esc(result.canaux) + "."
+        : "Envoi impossible : " + esc((result.resultats || []).map((r) => r.detail).join(" ; ")),
+        result.succes ? "ok" : "err", 8000);
+    } catch (err) {
+      toast("Envoi impossible : " + esc(err.message), "err");
+    } finally { setBusy(button, false); }
+  });
+}
+
 /* -------------------------------------------------------------------- santé */
 
 async function loadHealth() {
@@ -913,11 +1194,20 @@ async function loadHealth() {
     badges.push('<span class="badge ' + (marche === "demo" ? "warn" : "ok") + '">Données ' + esc(marche) + '</span>');
     const kb = payload.connaissances || {};
     badges.push('<span class="badge info">' + (kb.chunks || 0) + ' extraits de cours</span>');
+    const notif = payload.notifications || {};
+    if (notif.pret) {
+      badges.push('<span class="badge ' + ((payload.veille || {}).actif ? "ok" : "") + '">' +
+        ((payload.veille || {}).actif ? "Veille active" : "Alertes prêtes") + '</span>');
+    }
+    if (notif.veille_active) badges.push('<span class="badge ok">Veille automatique</span>');
     $("#badges").innerHTML = badges.join(" ");
   } catch (err) {
     $("#badges").innerHTML = '<span class="badge err">Diagnostic indisponible</span>';
   }
 }
+
+/* Les fonctions utilisées par des attributs onclick inline doivent être globales */
+window.loadReports = loadReports;
 
 /* -------------------------------------------------------------------- init */
 
@@ -928,6 +1218,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initCrosshair();
   initChat();
   initKnowledge();
+  initNotifications();
   loadHealth();
   $("#chart-period").value = state.period;
   $("#chart-interval").value = state.interval;

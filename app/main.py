@@ -26,6 +26,12 @@ from .api.routes import router as api_router
 from .config import BASE_DIR, get_settings
 from .knowledge import read_stats, sync_all
 from .llm import provider_status
+from .notifications import notify_status
+from .scheduler import scheduler_status, start_scheduler, stop_scheduler
+
+#: URL publique de l'application (utilisée dans les notifications).
+#: Renseignez APP_BASE_URL (ex. https://tradevision.onrender.com) pour l'inclure.
+PUBLIC_BASE_URL = __import__("os").environ.get("APP_BASE_URL", "").strip()
 
 logger = logging.getLogger("tradevision")
 
@@ -63,7 +69,7 @@ def _startup_indexing() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Initialisation : dossiers, index de connaissances, diagnostics."""
+    """Initialisation : dossiers, index de connaissances, veille, diagnostics."""
     settings = get_settings()
     settings.ensure_dirs()
     logging.basicConfig(
@@ -84,7 +90,14 @@ async def lifespan(app: FastAPI):
         threading.Thread(target=_startup_indexing, name="indexation", daemon=True).start()
     else:
         INDEX_STATUS.update({"etat": "desactive"})
+
+    # Veille automatique des marchés (active seulement si NOTIFY_ENABLED=true
+    # et qu'un canal Telegram/webhook est configuré).
+    start_scheduler(settings, base_url=PUBLIC_BASE_URL)
+
     yield
+
+    stop_scheduler()
 
 
 app = FastAPI(
@@ -136,7 +149,14 @@ def home(request: Request):
         "app_version": settings.app_version,
         "llm": provider_status(settings),
         "connaissances": read_stats(settings),
+        "notifications": notify_status(settings),
+        "veille": scheduler_status(),
         "max_upload_mb": settings.max_upload_mb,
+        "notify_enabled": settings.notify_enabled,
+        "watchlist": " ".join(settings.watchlist_symbols),
+        "notify_interval": settings.notify_interval_minutes,
+        "notify_min_score": settings.notify_min_score,
+        "app_base_url": PUBLIC_BASE_URL,
         "default_period": settings.default_period,
         "default_interval": settings.default_interval,
         "default_symbol": "AAPL",
@@ -169,6 +189,8 @@ def diagnostic() -> dict[str, Any]:
         "application": {"nom": settings.app_name, "version": settings.app_version},
         "llm": provider_status(settings),
         "connaissances": read_stats(settings),
+        "notifications": notify_status(settings),
+        "veille": scheduler_status(),
         "indexation_au_demarrage": INDEX_STATUS,
         "stockage": {
             "donnees": str(settings.data_path),

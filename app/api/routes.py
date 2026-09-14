@@ -21,6 +21,12 @@ from ..knowledge import (
     sync_all,
 )
 from ..llm import provider_status
+from ..notifications import (
+    analyze_and_notify,
+    get_notifier,
+    notify_status,
+    run_watchlist_cycle,
+)
 from ..market import (
     INTERVALS,
     PERIODS,
@@ -32,6 +38,7 @@ from ..market import (
 from ..reports import get_report_store
 from ..retriever import search as knowledge_search
 from ..services.analysis_service import AnalysisRequest, run_analysis
+from ..scheduler import scheduler_status, start_scheduler, stop_scheduler
 from ..services.chat_service import ChatRequest, run_chat
 from ..vectorstore import get_vector_store
 from ..vision import decode_image_payload
@@ -83,6 +90,32 @@ class ReindexPayload(BaseModel):
     force: bool = True
 
 
+class NotifyPayload(BaseModel):
+    """Envoi d'une analyse existante sur Telegram / webhook."""
+
+    report_id: str = Field(default="", max_length=32)
+    message: str = Field(default="", max_length=3500, description="Message libre (optionnel)")
+    base_url: str = Field(default="", max_length=300)
+
+
+class SendAnalysisPayload(BaseModel):
+    """Analyse d'un symbole puis envoi immédiat de la notification."""
+
+    symbol: str = Field(min_length=1, max_length=24)
+    period: str = Field(default="", max_length=8)
+    interval: str = Field(default="", max_length=8)
+    question: str = Field(default="", max_length=4000)
+
+
+class WatchlistPayload(BaseModel):
+    """Configuration ponctuelle de la veille (sans redémarrage)."""
+
+    watchlist: str = Field(default="", max_length=400)
+    interval_minutes: int = Field(default=240, ge=5, le=10080)
+    min_score: float = Field(default=0.0, ge=-100, le=100)
+    start: bool = True
+
+
 # --------------------------------------------------------------------- #
 #  Santé & configuration
 # --------------------------------------------------------------------- #
@@ -98,6 +131,8 @@ def health() -> dict[str, Any]:
         "marche": market_status(settings),
         "connaissances": read_stats(settings),
         "historique": get_report_store(settings).stats(),
+        "notifications": notify_status(settings),
+        "veille": scheduler_status(),
         "configuration": {
             "provider_embeddings": settings.embedding_provider,
             "backend_vectoriel": settings.vector_backend,
@@ -369,6 +404,106 @@ def knowledge_search_endpoint(
 ) -> dict[str, Any]:
     result = knowledge_search(q, top_k=top_k)
     return {"question": q, "mode": result.mode, "notes": result.notes, "resultats": result.sources}
+
+
+# --------------------------------------------------------------------- #
+#  Notifications (Telegram / webhook) et veille automatique
+# --------------------------------------------------------------------- #
+
+@router.get("/notifications", summary="État de la configuration des notifications")
+def notifications_status() -> dict[str, Any]:
+    return {
+        "notifications": notify_status(get_settings()),
+        "veille": scheduler_status(),
+    }
+
+
+@router.post("/notifications/test", summary="Envoyer un message de test")
+def notifications_test() -> dict[str, Any]:
+    return get_notifier(get_settings()).send_test()
+
+
+@router.post("/notifications/send", summary="Envoyer une analyse existante")
+def notifications_send(payload: NotifyPayload) -> dict[str, Any]:
+    settings = get_settings()
+    notifier = get_notifier(settings)
+
+    if payload.report_id:
+        report = get_report_store(settings).get(payload.report_id)
+        if report is None:
+            raise HTTPException(status_code=404, detail=f"Analyse introuvable : {payload.report_id}")
+        contenu = {
+            "analysis": report.get("analysis") or {},
+            "sources": report.get("sources") or [],
+            "warnings": report.get("warnings") or [],
+        }
+        livraison = notifier.send_analysis(contenu, base_url=payload.base_url)
+        return {"source": f"analyse #{payload.report_id}", **livraison}
+
+    if payload.message:
+        results = [resultat.to_dict() for resultat in notifier.send(payload.message)]
+        return {
+            "source": "message libre",
+            "canaux": notifier.label,
+            "resultats": results,
+            "succes": any(item["statut"] == "envoye" for item in results),
+        }
+
+    raise HTTPException(
+        status_code=400,
+        detail="Fournissez un report_id ou un message libre.",
+    )
+
+
+@router.post("/notifications/analysis", summary="Analyser un symbole et envoyer le résultat")
+def notifications_analysis(payload: SendAnalysisPayload) -> dict[str, Any]:
+    try:
+        return analyze_and_notify(
+            payload.symbol,
+            settings=get_settings(),
+            question=payload.question,
+            period=payload.period,
+            interval=payload.interval,
+            send=True,
+        )
+    except MarketDataError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/notifications/watchlist", summary="Lancer un scan de la watchlist et l'envoyer")
+def notifications_watchlist(payload: WatchlistPayload) -> dict[str, Any]:
+    settings = get_settings()
+    if payload.watchlist:
+        settings.watchlist = payload.watchlist
+    settings.notify_interval_minutes = payload.interval_minutes
+    settings.notify_min_score = payload.min_score
+    resultat = run_watchlist_cycle(settings=settings, send=True)
+    if payload.start:
+        start_scheduler(settings)
+    return resultat
+
+
+@router.post("/notifications/veille/start", summary="Démarrer la veille automatique")
+def veille_start(payload: WatchlistPayload | None = None) -> dict[str, Any]:
+    settings = get_settings()
+    if payload:
+        if payload.watchlist:
+            settings.watchlist = payload.watchlist
+        settings.notify_interval_minutes = payload.interval_minutes
+        settings.notify_min_score = payload.min_score
+        settings.notify_enabled = True
+    active = start_scheduler(settings)
+    return {
+        "demarree": active,
+        "veille": scheduler_status(),
+        "notifications": notify_status(settings),
+    }
+
+
+@router.post("/notifications/veille/stop", summary="Arrêter la veille automatique")
+def veille_stop() -> dict[str, Any]:
+    stop_scheduler()
+    return {"statut": "arrêtée", "veille": scheduler_status()}
 
 
 # --------------------------------------------------------------------- #

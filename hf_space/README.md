@@ -15,8 +15,12 @@ short_description: Analyse et prédiction de graphiques de trading (RAG + vision
 Analyse et prédiction de graphiques de trading : **RAG sur vos cours PDF**,
 **LLM vision** (lecture de captures) et **moteur d'indicateurs techniques** déterministe.
 
+> ⚠️ **Compte gratuit / PRO** : depuis 2026, créer un Space **Docker** ou **Gradio**
+> nécessite un plan payant (PRO 9 $/mois, Team ou Enterprise). Pour un hébergement
+> gratuit, déployez plutôt sur **Render** — voir `deploy/DEPLOIEMENT.md`.
+
 Ce Space est déployé automatiquement depuis le dépôt GitHub (voir
-`.github/workflows/sync-hf-space.yml`).
+`.github/workflows/sync-hf-space.yml`, installé depuis `deploy/`).
 
 ## Activer la vision et la rédaction par IA
 

@@ -17,12 +17,14 @@ interface web complète et **API REST**.
 | --- | --- |
 | 🔍 **Analyse d'un marché** | Actions, indices, crypto, devises, matières premières (AAPL, ^FCHI, BTC-USD, EURUSD=X, GC=F…) |
 | 🖼️ **Analyse d'une capture** | Vous envoyez un screenshot de graphique (TradingView, MT4/5…) : le LLM vision le transcrit (figure, niveaux, tendance, UT), puis l'analyse est croisée avec les données réelles si le symbole est reconnu |
+| 📄 **Import de cours dans l'analyse** | Glissez un PDF/une note **directement dans l'onglet Analyse** : le document est indexé à la volée, puis l'analyse s'appuie immédiatement dessus (citations `[Source n]`) |
 | 🧮 **Moteur technique** | Tendance et structure de marché, pivots, supports/résistances, figures chartistes (ETE, double sommet/creux, triangles, canaux, ranges), figures de bougies (marteau, avalement, étoile du matin…), divergences prix/RSI, cassures avec volume |
 | 📐 **Indicateurs** | RSI, MACD, bandes de Bollinger, ATR, stochastique, Williams %R, ADX/DMI, OBV, volumes, profil de volume |
 | 🎯 **Prédiction & plan** | Score directionnel −100 → +100, niveau de confiance, scénarios haussier/baissier chiffrés, entrée, stop (ATR + structure), objectifs, ratio R/R, taille de position (règle du 1 %) |
 | 📚 **RAG personnel** | Vos PDF/Markdown/notes sont découpés par sections, vectorisés et cités dans la réponse (`[Source n]`) |
 | 💬 **Chat documentaire** | Posez une question sur vos cours ; recherche hybride (embeddings + BM25) |
 | 🗂️ **Historique** | Chaque analyse est enregistrée, relisible et exportable en Markdown |
+| 🔔 **Alertes & veille** | Envoi des analyses sur **Telegram** (gratuit) ou webhook (Discord, Slack, ntfy…) + **veille automatique** de votre liste de marchés, filtrée par seuil de score |
 | 🔌 **API REST** | Swagger sur `/api/docs` : utilisable depuis n'importe quelle application (mobile, bot, Excel…) |
 | 🔒 **Sécurité** | Protection facultative par jeton (`API_ACCESS_TOKEN`), CORS configurable, limites d'upload |
 
@@ -96,16 +98,38 @@ Interface : <http://localhost:8000> · API : <http://localhost:8000/api/docs>
 
 ---
 
-## 🌍 Déployer gratuitement en ligne
+## 🌍 Déployer en ligne — **Render recommandé**
 
-### Option A — Hugging Face Spaces (recommandée, gratuite, HTTPS inclus)
+> **Render ou Hugging Face ?** Vérifié en septembre 2026 : les Spaces **Docker** et
+> **Gradio** de Hugging Face **ne peuvent plus être créés sur un compte gratuit** (plan PRO à
+> 9 $/mois requis ; les comptes gratuits sont limités aux Spaces *Static*, incompatibles avec
+> FastAPI). **Render reste donc la seule option réellement gratuite** pour ce projet.
+> 👉 Guide complet pas-à-pas : **[`deploy/DEPLOIEMENT.md`](deploy/DEPLOIEMENT.md)**
 
-1. Créez un Space : <https://huggingface.co/new-space> → **SDK : Docker**, port **7860**.
-2. Créez un token Hugging Face avec droit *write* (Settings → Access Tokens).
-3. Dans GitHub → **Settings → Secrets and variables → Actions** :
-   - *Secret* `HF_TOKEN` = votre token Hugging Face
-   - *Variable* `HF_SPACE` = `votre-pseudo/tradevision-ia`
-4. Activez la synchronisation automatique en installant le workflow livré :
+### Option A — Render (gratuit, HTTPS, sans carte bancaire) ⭐
+
+1. Fusionnez le code dans `main` (ou déployez la branche de votre choix).
+2. Créez un compte sur <https://render.com> (connexion GitHub).
+3. **New + → Blueprint** → sélectionnez le dépôt : `render.yaml` configure tout
+   automatiquement (build, démarrage, sonde de santé `/healthz`, plan *Free*).
+4. Onglet **Environment** → ajoutez vos variables : `GEMINI_API_KEY` (clé gratuite
+   <https://aistudio.google.com/apikey>), `API_ACCESS_TOKEN`, `TELEGRAM_BOT_TOKEN`…
+5. Ouvrez l'URL `https://<votre-service>.onrender.com` et vérifiez `/api/health`.
+
+Limites du plan gratuit (et comment les gérer) : mise en veille après 15 min d'inactivité
+(réveil ~1 min — gardez le service éveillé avec un moniteur gratuit type UptimeRobot sur
+`/healthz`), système de fichiers **éphémère** (le corpus livré est réindexé automatiquement
+au démarrage ; réimportez vos PDF après un redémarrage, ou activez un disque persistant),
+et pas de cron job (utilisez un cron externe qui appelle
+`POST /api/notifications/watchlist`).
+
+### Option B — Hugging Face Spaces (nécessite le plan PRO)
+
+1. Space : <https://huggingface.co/new-space> → **SDK : Docker**, port **7860**.
+2. Token Hugging Face avec droit *write* (Settings → Access Tokens).
+3. GitHub → *Settings → Secrets and variables → Actions* : secret `HF_TOKEN`,
+   variable `HF_SPACE` = `votre-pseudo/tradevision-ia`.
+4. Installez le workflow livré puis poussez :
 
    ```bash
    mkdir -p .github/workflows
@@ -113,24 +137,7 @@ Interface : <http://localhost:8000> · API : <http://localhost:8000/api/docs>
    git add .github/workflows && git commit -m "ci: déploiement Hugging Face" && git push
    ```
 
-   À chaque push sur `main`, le Space est mis à jour automatiquement. Votre app est en ligne
-   sur `https://huggingface.co/spaces/<votre-pseudo>/tradevision-ia`.
-5. Pour activer la vision : Space → **Settings → Variables and secrets** → secret
-   `GEMINI_API_KEY` = votre clé (gratuite sur <https://aistudio.google.com/apikey>).
-
-> Pour pousser manuellement sur le Space :
-> ```bash
-> git remote add space https://huggingface.co/spaces/<pseudo>/tradevision-ia
-> git push space main
-> ```
-
-### Option B — Render (gratuit, HTTPS)
-
-1. Poussez ce dépôt sur GitHub.
-2. Render → **New → Blueprint** → sélectionnez le dépôt : le fichier `render.yaml` est
-   détecté automatiquement.
-3. Ajoutez les variables secrètes (`GEMINI_API_KEY`, éventuellement `API_ACCESS_TOKEN`).
-4. Déploiement en quelques minutes sur `https://<nom>.onrender.com`.
+5. Secrets du Space : *Settings → Variables and secrets* → `GEMINI_API_KEY`, etc.
 
 ### Option C — Docker (n'importe où : VPS, Koyeb, Fly.io, Railway, votre machine)
 
@@ -215,9 +222,25 @@ Si `API_ACCESS_TOKEN` est défini, ajoutez l'en-tête `-H "X-API-Token: votre_je
 | `GET` | `/api/market/{symbole}/report` | Rapport technique brut (Markdown) |
 | `GET`/`POST`/`DELETE` | `/api/knowledge…` | Liste, import, suppression, export, réindexation, recherche |
 | `GET`/`DELETE` | `/api/reports…` | Historique des analyses (+ export Markdown) |
-| `GET` | `/api/health`, `/api/diagnostic` | Diagnostic complet (LLM, marché, index) |
+| `POST` | `/api/notifications/analysis` | Analyser un symbole et l'envoyer (Telegram/webhook) |
+| `POST` | `/api/notifications/watchlist` | Scanner la watchlist et envoyer le résumé |
+| `POST` | `/api/notifications/veille/start` \| `/stop` | Piloter la veille automatique |
+| `GET` | `/api/health`, `/api/diagnostic` | Diagnostic complet (LLM, marché, index, veille) |
 
 ---
+
+## 🔔 Notifications et veille en ligne de commande
+
+```bash
+python -m app.notifications --test                  # message de test (Telegram/webhook)
+python -m app.notifications --digest                # scan de la watchlist + envoi du résumé
+python -m app.notifications --symbols AAPL,BTC-USD  # analyse ciblée + envoi
+python -m app.notifications --dry-run               # affiche le message sans l'envoyer
+```
+
+Variables : `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, ou `NOTIFY_WEBHOOK_URL`
+(Discord/Slack/ntfy). Veille automatique : `NOTIFY_ENABLED=true`,
+`NOTIFY_INTERVAL_MINUTES`, `NOTIFY_MIN_SCORE`, `WATCHLIST`.
 
 ## 🧪 Tests
 
@@ -226,10 +249,11 @@ pip install pytest
 python -m pytest tests -q
 ```
 
-57 tests couvrent : indicateurs techniques, découpage/ingestion, base vectorielle,
-recherche hybride (y compris le repli BM25), moteur d'analyse, couche vision, services
-d'orchestration, API REST, protection par jeton et interface web. Aucun test ne nécessite
-Internet ni clé API.
+**67 tests** couvrent : indicateurs techniques, découpage/ingestion (dont un vrai PDF),
+base vectorielle, recherche hybride (y compris le repli BM25), moteur d'analyse, couche
+vision, services d'orchestration, API REST, protection par jeton, interface web,
+**notifications** (envoi réel vers un webhook local) et **veille automatique**. Aucun test
+ne nécessite Internet ni clé API.
 
 ---
 
@@ -248,6 +272,11 @@ Toutes les variables sont listées et commentées dans `.env.example`.
 | `HYBRID_ALPHA` | `0.55` | Poids des vecteurs dans la recherche (1 = vecteurs seuls) |
 | `DATA_DIR` | `./data` | Index, documents importés, historique |
 | `API_ACCESS_TOKEN` | *(vide)* | Si défini, protège `/api/*` |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | *(vide)* | Envoi des analyses sur Telegram |
+| `NOTIFY_WEBHOOK_URL` | *(vide)* | Webhook générique (Discord, Slack, ntfy…) |
+| `NOTIFY_ENABLED` | `false` | Active la veille automatique de la watchlist |
+| `WATCHLIST` | `AAPL,BTC-USD,^FCHI` | Marchés suivis par la veille |
+| `APP_BASE_URL` | *(vide)* | URL publique ajoutée dans les messages |
 
 ---
 
@@ -270,12 +299,15 @@ projet-IA/
 │  ├─ bm25.py             # recherche lexicale
 │  ├─ reports.py          # historique des analyses
 │  ├─ prompts.py          # prompts d'analyse et de chat (méthode, citations)
+│  ├─ notifications.py    # envoi Telegram / webhook + veille (CLI incluse)
+│  ├─ scheduler.py        # fil d'arrière-plan de la veille automatique
 │  ├─ api/                # routes REST + sécurité
 │  └─ services/           # orchestration analyse et chat
 ├─ web/                   # interface (HTML + CSS + JS natif)
 ├─ knowledge/             # cours d'exemple indexés au démarrage
 ├─ tests/                 # 57 tests hors-ligne
 ├─ Dockerfile, docker-compose.yml, render.yaml, Procfile
+├─ deploy/DEPLOIEMENT.md                      # guide complet de mise en ligne (pas-à-pas)
 ├─ deploy/github-workflow-sync-hf-space.yml   # modèle de workflow (à copier dans .github/workflows/)
 └─ hf_space/README.md                         # en-tête du Space Hugging Face
 ```
@@ -292,6 +324,8 @@ projet-IA/
 | PDF ignoré (« aucun texte exploitable ») | PDF scanné : passez-le par un OCR avant import |
 | Recherche peu pertinente | Importez des cours plus spécifiques, ou passez à des embeddings API (`EMBEDDING_PROVIDER=gemini`) |
 | `401 Accès refusé` sur l'API | `API_ACCESS_TOKEN` est défini : envoyez `X-API-Token` |
+| Aucun message Telegram | Le bot n'a jamais reçu `/start`, ou chat id erroné : relancez `getUpdates` |
+| Veille inactive | `NOTIFY_ENABLED=true` **et** un canal configuré sont nécessaires ; le service doit être éveillé |
 | Erreur d'indexation au démarrage | Consultez `/api/diagnostic` (champ `indexation_au_demarrage`) |
 
 ---

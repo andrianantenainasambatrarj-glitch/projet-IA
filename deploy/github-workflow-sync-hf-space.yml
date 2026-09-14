@@ -1,4 +1,9 @@
-# Déploiement automatique du projet sur Hugging Face Spaces (gratuit).
+# Déploiement automatique du projet sur Hugging Face Spaces.
+#
+# ⚠️ Depuis 2026, la création d'un Space Docker ou Gradio exige un plan payant
+#    (PRO 9 $/mois, ou Team/Enterprise). Les comptes gratuits ne peuvent créer que
+#    des Spaces « Static », incapables de faire tourner FastAPI. Pour un hébergement
+#    GRATUIT, utilisez Render : voir deploy/DEPLOIEMENT.md (option A).
 #
 # INSTALLATION : copiez ce fichier dans  .github/workflows/sync-hf-space.yml
 #   mkdir -p .github/workflows && cp deploy/github-workflow-sync-hf-space.yml \

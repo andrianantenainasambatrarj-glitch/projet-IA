@@ -149,3 +149,63 @@ def test_protection_par_jeton(client, monkeypatch):
     assert client.get("/").status_code == 200  # l'interface reste publique
 
     settings.api_access_token = ""
+
+
+def _pdf_minimal(texte: str) -> bytes:
+    """Construit un petit PDF valide contenant du texte (pour tester l'import)."""
+    contenu = f"BT /F1 12 Tf 72 720 Td ({texte}) Tj ET".encode("ascii", "replace")
+    objets = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+        b"/Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>",
+        b"<< /Length " + str(len(contenu)).encode() + b" >>\nstream\n" + contenu + b"\nendstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    sortie = bytearray(b"%PDF-1.4\n")
+    offsets = []
+    for index, objet in enumerate(objets, start=1):
+        offsets.append(len(sortie))
+        sortie += f"{index} 0 obj\n".encode() + objet + b"\nendobj\n"
+    debut_xref = len(sortie)
+    sortie += f"xref\n0 {len(objets) + 1}\n".encode()
+    sortie += b"0000000000 65535 f \n"
+    for offset in offsets:
+        sortie += f"{offset:010d} 00000 n \n".encode()
+    sortie += (
+        f"trailer\n<< /Size {len(objets) + 1} /Root 1 0 R >>\nstartxref\n{debut_xref}\n%%EOF\n"
+    ).encode()
+    return bytes(sortie)
+
+
+def test_import_pdf_glisser_depose_puis_analyse(client):
+    """Reproduit le parcours de l'onglet Analyse : PDF déposé → indexé → analyse."""
+    pdf = _pdf_minimal("Ma methode de trading sur le CAC 40 en journalier avec stop structure")
+
+    depot = client.post(
+        "/api/knowledge/upload",
+        files={"files": ("mon-cours.pdf", pdf, "application/pdf")},
+    )
+    assert depot.status_code == 200, depot.text
+    resultat = depot.json()["resultats"][0]
+    assert resultat["status"] == "ingested", resultat
+    assert resultat["chunks"] >= 1
+    assert resultat["kind"] == "pdf"
+
+    # Le PDF importé est immédiatement interrogeable (chat + analyse)
+    recherche = client.get(
+        "/api/knowledge/search",
+        params={"q": "methode de trading CAC 40 journalier stop structure", "top_k": 3},
+    ).json()
+    titres = [source["title"].replace("-", " ") for source in recherche["resultats"]]
+    assert any("mon cours" in titre for titre in titres), titres
+    assert titres[0].startswith("mon cours"), "le PDF déposé doit être le mieux classé"
+
+    # ... et il fait partie de la base utilisée par l'analyse RAG
+    liste = client.get("/api/knowledge").json()["documents"]
+    assert any("mon cours" in doc["title"].replace("-", " ") for doc in liste)
+    analyse = client.post(
+        "/api/analyze",
+        json={"symbol": "AAPL", "interval": "1d", "question": "Quelle est ma méthode de trading ?"},
+    ).json()
+    assert analyse["sources"], "l'analyse doit toujours injecter des extraits de cours"

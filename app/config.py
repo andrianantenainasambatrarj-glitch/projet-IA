@@ -60,6 +60,20 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     ollama_vision_model: str = "qwen2.5vl:7b"
 
+    # ------------------------------------------------- Notifications / alertes
+    # Envoi automatique des analyses (Telegram recommandé : gratuit et simple).
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""
+    # Webhook générique (Discord, Slack, ntfy, Zapier/Make…) : URL complète.
+    notify_webhook_url: str = ""
+    notify_enabled: bool = False  # active la veille automatique (watchlist)
+    notify_interval_minutes: int = 240  # fréquence du scan automatique
+    notify_min_score: float = 0.0  # n'envoyer que si |score| >= seuil (0 = toujours)
+    notify_timeout_s: float = 25.0
+    watchlist: str = "AAPL,BTC-USD,^FCHI"  # symboles suivis (séparés par des virgules)
+    watchlist_period: str = "6mo"
+    watchlist_interval: str = "1d"
+
     # ------------------------------------------------------- Embeddings
     # auto | hashing | gemini | openai | local
     # `hashing` = 100 % local, instantané, aucune dépendance lourde (défaut gratuit).
@@ -111,6 +125,16 @@ class Settings(BaseSettings):
     @property
     def max_upload_bytes(self) -> int:
         return max(1, self.max_upload_mb) * 1024 * 1024
+
+    @property
+    def watchlist_symbols(self) -> list[str]:
+        """Symboles suivis par la veille : normalisés, dédoublonnés, plafonnés à 15."""
+        symbols: list[str] = []
+        for raw in (self.watchlist or "").replace(";", ",").split(","):
+            symbol = raw.strip().upper()
+            if symbol and symbol not in symbols:
+                symbols.append(symbol)
+        return symbols[:15]
 
     # Chemins résolus (avec création automatique à la demande)
     @property
