@@ -57,6 +57,12 @@ class AnalyzePayload(BaseModel):
     symbol: str = Field(default="", max_length=24, description="Ex : AAPL, BTC-USD, ^FCHI")
     period: str = Field(default="6mo", max_length=8)
     interval: str = Field(default="1d", max_length=8)
+    # Analyse « capture d'abord » : l'actif ET l'unité de temps sont lus sur l'image,
+    # la période d'historique est déduite de cette unité de temps.
+    auto_timeframe: bool = Field(
+        default=False,
+        description="Déduire l'actif et l'unité de temps de la capture (période adaptée automatiquement)",
+    )
     question: str = Field(default="", max_length=4000)
     image_base64: str = Field(default="", description="Capture du graphique (data URL ou base64)")
     top_k: int = Field(default=5, ge=1, le=12)
@@ -269,6 +275,7 @@ def analyze_endpoint(payload: AnalyzePayload) -> dict[str, Any]:
         image=image,
         top_k=payload.top_k,
         analyze_detected_symbol=payload.analyze_detected_symbol,
+        auto_timeframe=payload.auto_timeframe,
         save=payload.save,
     )
     try:

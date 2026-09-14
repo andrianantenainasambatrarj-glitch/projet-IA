@@ -108,7 +108,10 @@
       Pour activer la <b>lecture d'image par IA</b> et la rédaction par LLM, ajoutez une clé API
       gratuite : <span class="mono">GEMINI_API_KEY</span> (Google AI Studio),
       <span class="mono">OPENAI_API_KEY</span>, <span class="mono">ANTHROPIC_API_KEY</span> ou
-      <span class="mono">OPENROUTER_API_KEY</span> dans les variables d'environnement, puis redémarrez.
+      <span class="mono">OPENROUTER_API_KEY</span> dans les variables d'environnement, puis redémarrez.<br>
+      <span class="small">En attendant, indiquez l'actif et l'unité de temps dans votre question
+      (« analyse EUR/USD en 5 minutes ») : les données correspondantes seront récupérées pour
+      croiser la lecture de votre capture.</span>
     </div>
   </div>
   {% endif %}
@@ -147,41 +150,29 @@
     <div class="card">
       <div class="card-head">
         <div>
-          <h2>Analyser un marché ou une capture de graphique</h2>
+          <h2>Analyser une capture de graphique</h2>
           <p class="hint">
-            Choisissez un symbole et/ou joignez une image : l'analyse croise les données de marché,
-            vos cours indexés (RAG) et — si une clé LLM est configurée — la lecture de l'image par IA.
+            <b>Déposez votre capture, c'est tout.</b> L'IA lit l'actif, l'unité de temps et les
+            figures sur l'image, récupère les données de marché correspondantes, applique la
+            méthode de vos cours, puis rend un résultat <b>dans l'unité de temps de la capture</b>
+            (une capture en 5 minutes est analysée en 5 minutes, une capture journalière en
+            journalier).
           </p>
         </div>
       </div>
 
-      <form id="form-analyse" class="grid cols-3" autocomplete="off">
-        <label class="field">
-          <span>Symbole / marché</span>
-          <input type="text" id="symbol" list="symbols-list" placeholder="AAPL, BTC-USD, ^FCHI…" value="{{ default_symbol }}">
-          <datalist id="symbols-list">
-            {% for item in symboles %}
-            <option value="{{ item.symbol }}">{{ item.name }} — {{ item.asset }}</option>
-            {% endfor %}
-          </datalist>
-        </label>
-        <label class="field">
-          <span>Période</span>
-          <select id="period">
-            {% for key, label in periodes.items() %}
-            <option value="{{ key }}">{{ label }}</option>
-            {% endfor %}
-          </select>
-        </label>
-        <label class="field">
-          <span>Unité de temps</span>
-          <select id="interval">
-            {% for key, label in intervalles.items() %}
-            <option value="{{ key }}">{{ label }}</option>
-            {% endfor %}
-          </select>
-        </label>
-      </form>
+      <ol class="etapes">
+        <li><b>1.</b> Capture déposée</li>
+        <li><b>2.</b> Lecture de l'image (actif, unité de temps, figures)</li>
+        <li><b>3.</b> Cours appliqués (vos PDF/notes)</li>
+        <li><b>4.</b> Résultat + plan de trading</li>
+      </ol>
+
+      <datalist id="symbols-list">
+        {% for item in symboles %}
+        <option value="{{ item.symbol }}">{{ item.name }} — {{ item.asset }}</option>
+        {% endfor %}
+      </datalist>
 
       <div class="segmented" role="group" aria-label="Type de pièce jointe" id="segmented">
         <button type="button" class="seg active" id="dz-mode-image" aria-pressed="true">
@@ -206,7 +197,8 @@
         <input type="file" id="doc-input" multiple accept=".pdf,.md,.markdown,.txt,.text,.rst" class="sr-only">
       </div>
       <p class="small status-line" id="dz-help">
-        Une capture active la lecture d'image par IA et l'analyse croisée avec les données réelles.
+        L'IA lit l'actif, l'unité de temps et les figures sur cette image, puis analyse l'actif
+        correspondant dans la même unité de temps, avec la méthode de vos cours.
       </p>
       <p class="small status-line" id="doc-status" aria-live="polite"></p>
 
@@ -219,7 +211,7 @@
         <button type="button" class="btn primary" id="btn-analyse">
           <svg class="ico" aria-hidden="true"><use href="#i-play"/></svg> Analyser et prédire
         </button>
-        <button type="button" class="btn subtle" id="btn-demo">Exemple guidé (AAPL)</button>
+        <button type="button" class="btn subtle" id="btn-demo" title="Remplir le champ avec une question type">Exemple de question</button>
         <label class="field compact">
           <span>Extraits de cours</span>
           <input type="number" id="topk" value="5" min="1" max="12">
@@ -563,14 +555,44 @@
   <!-- ======================================================= AIDE ==== -->
   <section class="tab-panel" id="tab-aide" role="tabpanel" aria-labelledby="tab-btn-aide" hidden>
     <div class="card">
-      <div class="card-head"><div><h2>Comment ça marche</h2></div></div>
+      <div class="card-head">
+        <div>
+          <h2>Comment ça marche</h2>
+          <p class="hint">
+            Une seule chose à faire : <b>déposer la capture d'écran de votre graphique</b> (et, si
+            vous le souhaitez, vos cours en PDF). Il n'y a <b>ni symbole, ni période, ni unité de
+            temps à choisir</b> : tout est lu sur l'image.
+          </p>
+        </div>
+      </div>
       <ol class="steps">
-        <li><b>Ingestion</b> — vos PDF/notes sont découpés par sections, vectorisés (<span class="mono">embeddings</span>) et stockés dans la base locale.</li>
-        <li><b>Analyse technique</b> — le moteur calcule tendance, structure, supports/résistances, figures chartistes et chandeliers, RSI, MACD, ADX, ATR, Bollinger, volumes, puis un score directionnel et un plan (entrée, stop, objectifs, R/R).</li>
-        <li><b>Recherche RAG</b> — la description du graphique et votre question servent de requête ; les extraits les plus pertinents de vos cours sont récupérés (recherche hybride vecteurs + BM25).</li>
-        <li><b>LLM vision</b> — si une clé API est configurée, l'image est transcrite en description structurée, puis le modèle rédige l'analyse en s'appuyant explicitement sur vos cours (citations <span class="mono">[Source n]</span>).</li>
-        <li><b>Réponse</b> — conclusion, prédiction probabiliste, plan de trading, scénario alternatif, limites, avertissement.</li>
+        <li><b>1. Lecture de la capture</b> — l'image est transcrite : actif, unité de temps, tendance, figures, niveaux, bougies notables.</li>
+        <li><b>2. Données du même actif, dans la même unité de temps</b> — une capture en 5 minutes est analysée sur des bougies de 5 minutes ; l'actif lu sur l'image fait référence (si vous aviez indiqué un autre symbole dans une ancienne version, c'est l'image qui gagne, et c'est écrit dans le résultat).</li>
+        <li><b>3. Ingestion de vos cours</b> — vos PDF/notes sont découpés par sections, vectorisés (<span class="mono">embeddings</span>) et stockés dans la base locale.</li>
+        <li><b>4. Analyse technique</b> — le moteur calcule tendance, structure, supports/résistances, figures chartistes et chandeliers, RSI, MACD, ADX, ATR, Bollinger, volumes, puis un score directionnel et un plan (entrée, stop, objectifs, R/R).</li>
+        <li><b>5. Méthode du cours</b> — les extraits les plus pertinents de vos cours sont récupérés (recherche hybride vecteurs + BM25) et le modèle rédige en citant <span class="mono">[Source n]</span>, en tenant compte du rythme de la capture (scalping en M5, swing en H4/D1…).</li>
+        <li><b>6. Résultat</b> — lecture de la capture, méthode appliquée, prédiction probabiliste, plan de trading, scénario alternatif, limites et avertissement.</li>
       </ol>
+      <div class="table-wrap">
+        <table class="data">
+          <thead><tr><th>Ce que montre la capture</th><th>Unité de temps analysée</th><th>Historique récupéré</th></tr></thead>
+          <tbody>
+            <tr><td>M1 / 1 minute</td><td class="mono">1m</td><td>5 jours</td></tr>
+            <tr><td>M5 / 5 minutes</td><td class="mono">5m</td><td>1 mois</td></tr>
+            <tr><td>M15, M30</td><td class="mono">15m, 30m</td><td>1 mois</td></tr>
+            <tr><td>H1 / 1 heure</td><td class="mono">1h</td><td>3 mois</td></tr>
+            <tr><td>H4 / 4 heures</td><td class="mono">4h</td><td>6 mois</td></tr>
+            <tr><td>D1 / journalier</td><td class="mono">1d</td><td>6 mois</td></tr>
+            <tr><td>W1 / hebdomadaire</td><td class="mono">1wk</td><td>2 ans</td></tr>
+            <tr><td>MN / mensuel</td><td class="mono">1mo</td><td>5 ans</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="small muted">
+        Si l'unité de temps n'est pas lisible sur l'image, l'analyse le signale et travaille en
+        journalier par défaut. L'onglet <b>Graphique</b> reste disponible pour vérifier vous-même
+        l'actif et l'unité de temps utilisés par l'analyse.
+      </p>
     </div>
 
     <div class="card">
@@ -631,7 +653,7 @@
         <table class="data">
           <thead><tr><th>Méthode</th><th>Route</th><th>Rôle</th></tr></thead>
           <tbody>
-            <tr><td><span class="method post">POST</span></td><td class="mono">/api/analyze</td><td>Analyse complète (symbole et/ou image en base64)</td></tr>
+            <tr><td><span class="method post">POST</span></td><td class="mono">/api/analyze</td><td>Analyse d'une capture (<span class="mono">image_base64</span> + <span class="mono">auto_timeframe</span>) ou d'un symbole</td></tr>
             <tr><td><span class="method post">POST</span></td><td class="mono">/api/analyze/upload</td><td>Analyse depuis un fichier image (multipart)</td></tr>
             <tr><td><span class="method post">POST</span></td><td class="mono">/api/chat</td><td>Question sur vos cours (RAG)</td></tr>
             <tr><td><span class="method get">GET</span></td><td class="mono">/api/market/{symbole}</td><td>Données de marché + séries + résumé technique</td></tr>

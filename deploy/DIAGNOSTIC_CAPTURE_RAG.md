@@ -3,6 +3,13 @@
 **Projet :** TradeVision IA · **Date :** 14 septembre 2026 · **Correctif :** commit `23bc8b2`
 (branche `arena/01a09f32-projet-ia`)
 
+> ℹ️ **Note de suivi** — ce document décrit le diagnostic de l'époque où le formulaire
+> demandait encore un symbole, une période et une unité de temps. Depuis, l'interface a été
+> recentrée sur la capture (aucun de ces champs n'existe plus) : **c'est toujours l'actif lu
+> sur l'image qui fait référence**, mais l'analyse suit en plus **l'unité de temps de la
+> capture** et le symbole saisi est écarté avec une explication au lieu d'être signalé comme
+> une incohérence. Voir `README.md` → « Parcours d'analyse d'une capture ».
+
 ---
 
 ## 1. Le symptôme, tel qu'il a été observé

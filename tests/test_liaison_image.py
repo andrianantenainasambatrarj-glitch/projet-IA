@@ -180,32 +180,37 @@ def test_tracabilite_de_la_capture_dans_la_reponse(settings, monkeypatch) -> Non
 #  3) Incohérence capture ↔ symbole : elle doit être détectée et dite
 # --------------------------------------------------------------------- #
 
-def test_incoherence_capture_et_symbole_signalee(settings, monkeypatch) -> None:
+def test_capture_prioritaire_sur_le_symbole_saisi(settings, monkeypatch) -> None:
+    """La capture fait foi : un symbole saisi qui la contredit est écarté, et on le dit."""
     espion = EspionLLM()
     monkeypatch.setattr("app.services.analysis_service.get_llm", lambda *a, **k: espion)
 
     reponse = run_analysis(
-        AnalysisRequest(symbol="AAPL", image=png_image(), save=False), settings=settings
+        AnalysisRequest(symbol="AAPL", image=png_image(), auto_timeframe=True, save=False),
+        settings=settings,
     )
 
     coherence = reponse.coherence
-    assert coherence["symbole_demande"] == "AAPL"
     assert coherence["capture_lue"] == "EUR/USD"
     assert coherence["symbole_capture"] == "EURUSD=X"
-    assert coherence["incoherent"] is True
-    assert "EURUSD=X" in coherence["message"]
+    assert coherence["symbole_remplace"] is True
+    assert coherence["symbole_saisi"] == "AAPL"
+    # L'analyse porte bien sur l'actif de l'image, pas sur le symbole saisi
+    assert coherence["symbole_demande"] == "EURUSD=X"
+    assert reponse.analysis["instrument"]["symbol"] == "EURUSD=X"
 
     avertissements = " ".join(reponse.warnings)
-    assert "Incohérence détectée" in avertissements
+    assert "Symbole saisi ignoré" in avertissements
     assert "EUR/USD" in avertissements and "AAPL" in avertissements
 
-    # Le prompt doit porter une consigne impérative de confrontation
+    # Le prompt doit porter la consigne de priorité et de confrontation
     prompt = espion.appels[1]["prompt"]
     assert "CONTRÔLE DE COHÉRENCE" in prompt
-    assert "INCOHÉRENCE" in prompt
-    assert "appuie toutes les figures" in prompt
-    # Le rapport technique reste présent, mais présenté pour le bon actif
-    assert "Actif des données chiffrées : AAPL" in prompt
+    assert "a été écarté" in prompt
+    assert "Actif des données chiffrées : EURUSD=X" in prompt
+    # Le sujet analysé est bien la capture, pas les données chiffrées
+    assert "c'est elle que tu analyses" in prompt
+    assert "Lecture de la capture" in espion.appels[1]["prompt"]
 
 
 def test_capture_concordante_pas_de_fausse_alerte(settings, monkeypatch) -> None:
@@ -232,6 +237,83 @@ def test_symbole_deduit_de_la_capture_quand_aucun_nest_saisi(settings, monkeypat
     assert reponse.analysis["instrument"]["symbol"] == "EURUSD=X"
     assert reponse.coherence["incoherent"] is False
     assert "EURUSD=X" in " ".join(reponse.warnings)
+    assert reponse.mode_analyse == "capture"
+    assert "concordent" in reponse.coherence["message"]
+    assert reponse.coherence["symbole_capture"] == "EURUSD=X"
+
+
+def test_unite_de_temps_de_la_capture_imposee(settings, monkeypatch) -> None:
+    """La capture en 4 heures est analysée en 4 heures, avec la période adaptée."""
+    espion = EspionLLM(symbole_lu="EUR/USD", unite="H4")
+    monkeypatch.setattr("app.services.analysis_service.get_llm", lambda *a, **k: espion)
+
+    reponse = run_analysis(
+        AnalysisRequest(symbol="", image=png_image(), auto_timeframe=True, save=False),
+        settings=settings,
+    )
+
+    assert reponse.coherence["unite_de_temps_capture"] == "4h"
+    assert reponse.coherence["unite_de_temps_donnees"] == "4h"
+    assert reponse.request["interval"] == "4h"
+    assert reponse.request["period"] == "6mo", "période déduite de l'unité de temps"
+    assert reponse.analysis["instrument"]["timeframe"] == "4h"
+    assert "Unité de temps lue sur la capture" in reponse.coherence["message_temps"]
+
+
+def test_unite_de_temps_illisible_repli_explicite(settings, monkeypatch) -> None:
+    """Unité de temps non lisible : repli en journalier, annoncé à l'utilisateur."""
+    espion = EspionLLM(symbole_lu="EUR/USD", unite="non lisible")
+    monkeypatch.setattr("app.services.analysis_service.get_llm", lambda *a, **k: espion)
+
+    reponse = run_analysis(
+        AnalysisRequest(symbol="", image=png_image(), auto_timeframe=True, save=False),
+        settings=settings,
+    )
+    assert reponse.request["interval"] == "1d"
+    assert reponse.coherence["donnees_adaptees"] is False
+    assert "illisible" in " ".join(reponse.warnings)
+
+
+@pytest.mark.parametrize(
+    "lue, attendu",
+    [("M5", "5m"), ("5 minutes", "5m"), ("M15", "15m"), ("H1", "1h"), ("H4", "4h"),
+     ("D1", "1d"), ("W1", "1wk"), ("MN", "1mo"), ("journalier", "1d")],
+)
+def test_lecture_des_unites_de_temps(lue: str, attendu: str) -> None:
+    from app.market import interval_from_timeframe
+
+    assert interval_from_timeframe(lue) == attendu
+
+
+def test_prompt_de_capture_propre(settings, monkeypatch) -> None:
+    """Avec une capture, la rédaction suit la méthode « capture d'abord »."""
+    espion = EspionLLM(unite="M5")
+    monkeypatch.setattr("app.services.analysis_service.get_llm", lambda *a, **k: espion)
+
+    run_analysis(
+        AnalysisRequest(symbol="", image=png_image(), auto_timeframe=True, save=False),
+        settings=settings,
+    )
+    appel = espion.appels[-1]
+    assert "CAPTURE DE GRAPHIQUE" in appel["prompt"]
+    assert "CONFIRMATION PAR LES DONNÉES DE MARCHÉ" in appel["prompt"]
+    assert "LECTURE DE LA CAPTURE" in appel["prompt"]
+    # Une capture en 5 minutes doit aussi interroger le cours sur l'intraday
+    # (voir test_requetes_rag_adaptees_a_l_unite_de_temps)
+
+
+def test_requetes_rag_adaptees_a_l_unite_de_temps(settings, monkeypatch) -> None:
+    """Le cours est interrogé sur le bon rythme (M5 → scalping, pas swing long)."""
+    espion = EspionLLM(unite="M5")
+    monkeypatch.setattr("app.services.analysis_service.get_llm", lambda *a, **k: espion)
+
+    reponse = run_analysis(
+        AnalysisRequest(symbol="", image=png_image(), auto_timeframe=True, save=False),
+        settings=settings,
+    )
+    jointes = " | ".join(reponse.rag_requetes).lower()
+    assert "scalping" in jointes
+    assert "unité de temps 5m" in jointes
 
 
 # --------------------------------------------------------------------- #
@@ -326,3 +408,50 @@ def test_gemini_sans_image_pour_le_texte(monkeypatch) -> None:
 
     parties = FauxClient.dernier["json"]["contents"][0]["parts"]
     assert not any("inline_data" in partie for partie in parties)
+
+# --------------------------------------------------------------------- #
+#  6) Repli sans IA vision : actif et unité de temps repris de la question
+# --------------------------------------------------------------------- #
+
+def test_actif_et_unite_de_temps_repris_de_la_question(settings) -> None:
+    """Sans clé IA, la capture reste analysable si la question nomme l'actif et le rythme.
+
+    C'est le mode démo : la capture est transmise mais personne ne la lit, donc
+    l'application s'appuie sur ce que l'utilisateur a écrit.
+    """
+    reponse = run_analysis(
+        AnalysisRequest(
+            symbol="",
+            question="Analyse EUR/USD en 5 minutes et donne-moi un plan",
+            image=png_image(),
+            auto_timeframe=True,
+            save=False,
+        ),
+        settings=settings,
+    )
+
+    assert reponse.image["transmise_au_modele"] is False, "aucun LLM configuré"
+    assert reponse.analysis is not None
+    assert reponse.request["interval"] == "5m"
+    assert reponse.request["period"] == "1mo"
+    assert reponse.coherence["origine_unite_de_temps"] == "question"
+    assert reponse.coherence["symbole_source_question"] is True
+    assert reponse.request["symbol"] == "EURUSD=X"
+
+
+def test_unite_de_temps_de_la_capture_prioritaire_sur_la_question(settings, monkeypatch) -> None:
+    """Quand la capture est lisible, c'est elle qui fixe l'unité de temps."""
+    espion = EspionLLM(unite="H1")
+    monkeypatch.setattr("app.services.analysis_service.get_llm", lambda *a, **k: espion)
+    reponse = run_analysis(
+        AnalysisRequest(
+            symbol="",
+            question="analyse en 5 minutes",
+            image=png_image(),
+            auto_timeframe=True,
+            save=False,
+        ),
+        settings=settings,
+    )
+    assert reponse.coherence["origine_unite_de_temps"] == "capture"
+    assert reponse.request["interval"] == "1h"

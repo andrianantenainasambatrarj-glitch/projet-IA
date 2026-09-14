@@ -375,9 +375,13 @@ Commandes : *build* `pip install -r requirements.txt`, *start* `python run.py`.
 
 - [ ] La page d'accueil s'affiche et la bannière d'état est correcte
 - [ ] `/api/health` renvoie `"status": "ok"` et le bon fournisseur LLM
-- [ ] L'analyse d'un symbole (ex. `AAPL`) produit un verdict, des niveaux et des figures
+- [ ] Le glisser-déposer d'une **capture de graphique** produit un verdict, des niveaux et des
+      figures, et le bloc « Lecture de la capture par l'IA » décrit ce qui a été lu sur l'image
+- [ ] L'analyse est bien menée **dans l'unité de temps de la capture** (une capture en 5 minutes
+      doit afficher « Unité de temps lue sur votre capture : 5 minutes »)
+- [ ] Sans capture, le bouton d'analyse explique qu'il faut déposer une image (il ne lance rien)
 - [ ] Un glisser-déposer de **PDF** dans l'onglet *Analyse* indexe le document et l'analyse
-      s'appuie dessus
+      s'appuie dessus (citations `[Source n]`)
 - [ ] Le **chat** répond avec des citations `[Source n]`
 - [ ] L'**historique** enregistre chaque analyse et l'export Markdown fonctionne
 - [ ] Un **message de test** Telegram arrive (si configuré)

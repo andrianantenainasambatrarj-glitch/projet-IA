@@ -486,20 +486,31 @@ function renderCoherence(payload) {
   const box = $("#coherence");
   if (!box) return;
   const co = payload.coherence || {};
+  const blocs = [];
   if (co.incoherent) {
-    const symbole = co.symbole_capture || "";
-    box.innerHTML = '<div class="banner">' + icon("warn") +
-      "<div><b>La capture ne correspond pas au symbole analysé</b><p>" + esc(co.message || "") + "</p>" +
-      (symbole
-        ? '<button type="button" class="btn" id="btn-analyser-capture" data-symbole="' + esc(symbole) + '">' +
-          icon("analyse", "ico-sm") + " Analyser " + esc(symbole) + " avec cette capture</button>"
-        : "") +
-      "</div></div>";
-  } else if (co.symbole_capture && co.message) {
-    box.innerHTML = '<div class="banner banner-info">' + icon("info") + "<div>" + esc(co.message) + "</div></div>";
-  } else {
-    box.innerHTML = "";
+    blocs.push('<div class="banner">' + icon("warn") +
+      "<div><b>Les chiffres ne confirment pas la capture</b><p>" + esc(co.message || "") + "</p>" +
+      "<p class=\"small\">Seules les figures lues sur l'image sont analysées ; les niveaux " +
+      "calculés ne s'appliquent pas à la capture.</p></div></div>");
+  } else if (co.message) {
+    blocs.push('<div class="banner banner-info">' + icon("info") + "<div>" + esc(co.message) + "</div></div>");
   }
+  if (co.unite_de_temps_donnees) {
+    // L'origine compte : unité lue sur l'image, indiquée dans la question, ou
+    // journalier par défaut quand rien n'est lisible.
+    const origine = co.origine_unite_de_temps || "defaut";
+    const titres = {
+      capture: "Unité de temps lue sur votre capture",
+      question: "Unité de temps indiquée dans votre question",
+      defaut: "Unité de temps non reconnue : journalier par défaut",
+    };
+    blocs.push('<div class="banner banner-info">' + icon("info") + "<div>" +
+      esc(titres[origine] || titres.defaut) + " : <b>" +
+      esc(libelleIntervalle(co.unite_de_temps_donnees)) + "</b>" +
+      (co.message_temps ? "<p class=\"small\">" + esc(co.message_temps) + "</p>" : "") +
+      "</div></div>");
+  }
+  box.innerHTML = blocs.join("");
 }
 
 function renderFactors(analysis) {
@@ -573,8 +584,18 @@ function renderAnalysis(payload) {
   }
 
   if (analysis && analysis.instrument && analysis.instrument.symbol) {
+    // L'onglet Graphique suit l'actif analysé : on peut vérifier visuellement
+    // la capture et les données utilisées pour la confirmer.
     state.symbol = analysis.instrument.symbol;
-    $("#symbol").value = analysis.instrument.symbol;
+    $("#chart-symbol").value = state.symbol;
+    if (analysis.instrument.timeframe) {
+      state.interval = analysis.instrument.timeframe;
+      if ($("#chart-interval")) $("#chart-interval").value = state.interval;
+    }
+    if (payload.request && payload.request.period) {
+      state.period = payload.request.period;
+      if ($("#chart-period")) $("#chart-period").value = state.period;
+    }
     sauverPreferences();
   }
   return analysis;
@@ -594,24 +615,35 @@ function erreurAnalyse(message) {
   $("#sources").innerHTML = "";
 }
 
+//: Libellés lisibles des unités de temps (pour les messages de l'interface).
+const LIBELLES_INTERVALLES = {
+  "1m": "1 minute", "5m": "5 minutes", "15m": "15 minutes", "30m": "30 minutes",
+  "1h": "1 heure", "4h": "4 heures", "1d": "journalier", "1wk": "hebdomadaire",
+  "1mo": "mensuel",
+};
+function libelleIntervalle(interval) {
+  return LIBELLES_INTERVALLES[interval] || interval || "inconnue";
+}
+
 async function runAnalyse(event) {
   if (event) event.preventDefault();
   const button = $("#btn-analyse");
   const question = $("#question").value.trim();
-  const symbol = $("#symbol").value.trim().toUpperCase();
-  const body = {
-    symbol: symbol,
-    period: $("#period").value,
-    interval: $("#interval").value,
-    question: question,
-    top_k: Number($("#topk").value || 5),
-    image_base64: state.imageDataUrl || "",
-  };
-  if (!body.symbol && !body.image_base64) {
-    toast("Indiquez un symbole (ex. AAPL) ou joignez une capture de graphique.", "warn");
-    $("#symbol").focus();
+  // Une capture est la pièce maîtresse : sans elle, il n'y a rien à lire.
+  if (!state.imageDataUrl) {
+    toast("Déposez d'abord une capture de graphique : c'est elle que l'IA analyse.", "warn");
+    const zone = $("#dropzone");
+    if (zone) { activerModeCapture(); zone.focus(); }
     return;
   }
+  const body = {
+    question: question,
+    top_k: Number($("#topk").value || 5),
+    image_base64: state.imageDataUrl,
+    // L'actif ET l'unité de temps sont lus sur la capture ; la période d'historique
+    // est déduite de cette unité de temps (une capture M5 → données en 5 minutes).
+    auto_timeframe: true,
+  };
 
   setBusy(button, true, "Analyse en cours…");
   try {
@@ -654,11 +686,15 @@ function preparerDropzone(zone) {
   return corps;
 }
 
+//: Sélecteur de mode défini par initAnalyse, réutilisable ailleurs (ex. rappel
+//: « déposez d'abord une capture » qui doit ramener l'utilisateur sur la bonne zone).
+let activerModeGlobal = null;
+function activerModeCapture() {
+  if (activerModeGlobal) activerModeGlobal("image");
+}
+
 function initAnalyse() {
-  $("#form-analyse").addEventListener("submit", runAnalyse);
   $("#btn-analyse").addEventListener("click", runAnalyse);
-  $("#period").value = state.period;
-  $("#interval").value = state.interval;
 
   document.addEventListener("keydown", (event) => {
     if ((event.ctrlKey || event.metaKey) && event.key === "Enter") runAnalyse();
@@ -669,12 +705,13 @@ function initAnalyse() {
     image: {
       bouton: $("#dz-mode-image"),
       zone: $("#dropzone"),
-      aide: "Une capture active la lecture d'image par IA et l'analyse croisée avec les données réelles.",
+      aide: "L'IA lit l'actif, l'unité de temps et les figures sur cette image, puis analyse " +
+        "l'actif correspondant dans la même unité de temps, avec la méthode de vos cours.",
     },
     doc: {
       bouton: $("#dz-mode-doc"),
       zone: $("#dropzone-doc"),
-      aide: "Le document est indexé, puis l'analyse s'appuie dessus avec des citations [Source n].",
+      aide: "Vos cours sont indexés, puis utilisés par l'analyse avec des citations [Source n].",
     },
   };
 
@@ -689,6 +726,7 @@ function initAnalyse() {
   };
   modes.image.bouton.addEventListener("click", () => activerMode("image"));
   modes.doc.bouton.addEventListener("click", () => activerMode("doc"));
+  activerModeGlobal = activerMode;
 
   /* ----------------------------------------------------- capture d'image */
   const dropzone = $("#dropzone");
@@ -770,14 +808,14 @@ function initAnalyse() {
     });
   });
 
-  /* --------------------------------------------------------- exemple guidé */
+  /* ------------------------------------------- exemple de question type */
   $("#btn-demo").addEventListener("click", () => {
-    $("#symbol").value = "AAPL";
-    $("#question").value = "Analyse ce graphique, identifie la figure principale et donne-moi un plan avec stop et objectifs.";
-    $("#period").value = "6mo";
-    $("#interval").value = "1d";
+    $("#question").value =
+      "Identifie la figure principale sur cette capture, dis-moi si elle est valide selon " +
+      "la méthode du cours, et propose un plan avec stop et objectifs dans la même unité de temps.";
     activerMode("image");
-    runAnalyse();
+    $("#question").focus();
+    toast("Question type ajoutée : déposez votre capture puis lancez l'analyse.", "info", 5000);
   });
 
   /* ------------------------------------------------------------ copie */
@@ -792,15 +830,13 @@ function initAnalyse() {
     }
   });
 
-  // mémorise le symbole saisi même sans lancer d'analyse
-  $("#symbol").addEventListener("change", () => {
-    state.symbol = ($("#symbol").value.trim().toUpperCase() || "AAPL");
-    $("#chart-symbol").value = state.symbol;
-    sauverPreferences();
-  });
-  [["#period", "period"], ["#interval", "interval"]].forEach(([sel, cle]) => {
-    $(sel).addEventListener("change", () => { state[cle] = $(sel).value; sauverPreferences(); });
-  });
+  // L'onglet Analyse ne pilote plus l'onglet Graphique : celui-ci garde ses propres
+  // réglages (le graphique ne sert qu'à vérifier visuellement l'actif analysé).
+  [["#chart-symbol", "symbol"], ["#chart-period", "period"], ["#chart-interval", "interval"]]
+    .forEach(([sel, cle]) => {
+      const champ = $(sel);
+      if (champ) champ.addEventListener("change", () => { state[cle] = champ.value; sauverPreferences(); });
+    });
 }
 
 async function uploadPendingDocuments() {
@@ -1657,34 +1693,11 @@ async function loadHealth(forcer) {
 
 /* ------------------------------------------------------------------ init */
 
-// Bouton « Analyser <symbole> avec cette capture » proposé lorsqu'une incohérence
-// est détectée entre l'actif de l'image et le symbole saisi.
-function initCoherenceActions() {
-  const box = $("#coherence");
-  if (!box) return;
-  box.addEventListener("click", (event) => {
-    const bouton = event.target.closest("#btn-analyser-capture");
-    if (!bouton) return;
-    const symbole = (bouton.dataset.symbole || "").trim();
-    if (!symbole) return;
-    $("#symbol").value = symbole;
-    sauverPreferences();
-    toast(
-      "Analyse relancée sur " + symbole + " avec la même capture" +
-      (state.imageDataUrl ? "." : " (aucune capture jointe)."),
-      "info",
-      4500
-    );
-    runAnalyse();
-  });
-}
-
 document.addEventListener("DOMContentLoaded", () => {
   chargerPreferences();
   initTheme();
   initTabs();
   initAnalyse();
-  initCoherenceActions();
   initChartControls();
   initCrosshair();
   initChat();
@@ -1701,8 +1714,6 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  $("#period").value = state.period;
-  $("#interval").value = state.interval;
   $("#chart-symbol").value = state.symbol;
   $("#chart-period").value = state.period;
   $("#chart-interval").value = state.interval;

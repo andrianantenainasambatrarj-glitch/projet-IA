@@ -336,6 +336,15 @@ kbd {
 }
 
 /* -------------------------------------------------- segment / dropzone */
+/* Étapes de l'analyse (rappel visuel du parcours dans l'onglet Analyse) */
+.etapes { display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 14px 0 4px; padding: 0; list-style: none; }
+.etapes li {
+  display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px;
+  border: 1px solid var(--border-soft); border-radius: 999px;
+  background: var(--surface-2); font-size: 12.6px; color: var(--text-dim);
+}
+.etapes li b { color: var(--accent); font-weight: 700; }
+
 .segmented {
   display: inline-flex; gap: 4px; padding: 4px; margin: 4px 0 12px;
   background: var(--surface-2); border: 1px solid var(--border-soft); border-radius: 12px;

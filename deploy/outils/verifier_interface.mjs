@@ -92,6 +92,11 @@ verifier("page servie avec ses onglets", doc.querySelectorAll("nav.tabs button")
 verifier("badges d'état remplis", texte("#badges").length > 10, texte("#badges"));
 verifier("graphique alimenté (statut)", /bougies/.test(texte("#chart-status")) || /indisponibles/.test(texte("#chart-status")), texte("#chart-status"));
 
+// Sans capture, l'analyse est refusée avec un message clair (pas d'erreur JS)
+cliquer("#btn-analyse");
+await attendre(400);
+verifier("analyse refusée sans capture", doc.querySelector("#result-card").hidden === true);
+
 // Capture d'image : dépôt d'un vrai fichier PNG (lecture par FileReader)
 const png = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
@@ -104,8 +109,12 @@ champImage.dispatchEvent(new window.Event("change", { bubbles: true }));
 await attendre(500);
 verifier("capture déposée et lue par l'interface", /Capture prête/.test(texte("#dropzone")), texte("#dropzone"));
 
-// Analyse (parcours principal)
-doc.querySelector("#symbol").value = "AAPL";
+// Analyse (parcours principal) : la capture déposée suffit, aucun symbole à saisir
+verifier("aucun champ symbole/période dans l'onglet Analyse",
+  !doc.querySelector("#symbol") && !doc.querySelector("#period") && !doc.querySelector("#interval"));
+// En mode démo (aucune clé IA dans l'environnement de test), l'actif et l'unité de
+// temps peuvent être précisés dans la question : on vérifie ce chemin de repli.
+doc.querySelector("#question").value = "Analyse EUR/USD en 5 minutes et propose un plan";
 cliquer("#btn-analyse");
 await attendre(2500);
 verifier("traçabilité de la capture affichée", /Capture reçue/.test(texte("#vision")), texte("#vision"));

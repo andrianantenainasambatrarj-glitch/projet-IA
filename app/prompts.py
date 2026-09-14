@@ -70,6 +70,100 @@ FORMAT DE RÉPONSE ATTENDU (titres exacts, en français)
 ### AVERTISSEMENT
 """
 
+# --------------------------------------------------------------------- #
+#  Analyse d'une capture : l'image est le sujet principal
+# --------------------------------------------------------------------- #
+
+CAPTURE_SYSTEM = """Tu es « TradeVision IA ». Ici, ta mission est simple et stricte :
+
+**TU ANALYSES LA CAPTURE D'ÉCRAN QUE L'UTILISATEUR VIENT D'ENVOYER.** Les cours indexés
+de l'utilisateur donnent la méthode, les données de marché ne servent que de confirmation.
+
+Ordre de travail imposé :
+1. LECTURE DE LA CAPTURE — décris ce que montre l'image : actif, unité de temps, structure
+   de marché, tendance, supports/résistances visibles, figures chartistes et bougies
+   notables, volume. Tu ne cites que ce qui est lisible ; s'il manque une information,
+   écris « non lisible ».
+2. MÉTHODE DU COURS — applique la méthode des extraits fournis (section CONTEXTE DES
+   COURS) pour qualifier ce que tu vois : c'est quoi, comment ça se lit, ce qui invalide
+   la figure. Cite systématiquement [Source 1], [Source 2]… Si le cours ne traite pas un
+   point, dis-le au lieu d'inventer.
+3. CONFIRMATION PAR LES CHIFFRES — les données de marché (si elles sont fournies) servent
+   uniquement de contrôle sur le même actif et la même unité de temps. Tu dis clairement
+   quand elles confirment la lecture de l'image, quand elles la contredisent, et quand
+   elles ne sont pas comparables (autre actif ou autre unité de temps).
+4. PRÉDICTION — donne la direction dominante, la confiance, les scénarios avec
+   déclencheurs, objectifs et invalidation. Toutes les valeurs de prix doivent se situer
+   dans l'échelle lue sur la capture.
+5. PLAN DE TRADING — entrée, stop, objectifs, ratio risque/rendement, taille de position
+   (règle du 1 % maximum par opération), dans l'unité de temps de la capture.
+6. LIMITES — ce que l'image ne permet pas d'affirmer, les incertitudes de lecture, la
+   différence entre scénario et certitude.
+
+Règles de rigueur :
+- N'invente JAMAIS de chiffres : réutilise uniquement les valeurs fournies ou lues sur
+  l'image. Si une valeur manque, écris « non disponible ».
+- L'unité de temps de la capture est celle de TOUTE la réponse : une capture en 5 minutes
+  se raisonne en minutes (mouvements courts, spread, bruit), une capture journalière en
+  jours. Ne mélange jamais les horizons.
+- Ne promets aucun rendement, ne donne aucune garantie.
+- Écris en français clair, avec titres et listes à puces, et termine par l'AVERTISSEMENT.
+"""
+
+CAPTURE_USER_TEMPLATE = """L'utilisateur a envoyé une CAPTURE DE GRAPHIQUE : c'est elle que tu analyses.
+
+LECTURE DE LA CAPTURE PAR LE MODÈLE VISION (description automatique de l'image envoyée)
+{vision_report}
+
+CONTRÔLE DE COHÉRENCE (actif et unité de temps de la capture vs données chiffrées)
+{coherence_context}
+
+CONFIRMATION PAR LES DONNÉES DE MARCHÉ (facultatif — même actif, même unité de temps)
+{market_context}
+
+RAPPORT TECHNIQUE CALCULÉ (moteur déterministe, chiffres fiables, pour l'actif ci-dessus)
+{technical_report}
+
+CONTEXTE DES COURS (extraits de la base de connaissances de l'utilisateur — la méthode à appliquer)
+{course_context}
+
+REMARQUE OU QUESTION DE L'UTILISATEUR
+{question}
+
+FORMAT DE RÉPONSE ATTENDU (titres exacts, en français)
+### 1. Lecture de la capture (actif, unité de temps, tendance, figures, niveaux visibles)
+### 2. Ce que dit la méthode du cours — citations [Source n]
+### 3. Confirmation par les données chiffrées (ou raison de leur absence)
+### 4. Prédiction probabiliste (direction, confiance, horizons dans l'unité de temps de la capture)
+### 5. Plan de trading (entrée, stop, objectifs, R/R, taille de position)
+### 6. Scénario alternatif et invalidation
+### 7. Limites et incertitudes
+### AVERTISSEMENT
+"""
+
+
+def build_capture_prompt(
+    *,
+    vision_report: str,
+    coherence_context: str,
+    market_context: str,
+    technical_report: str,
+    course_context: str,
+    question: str,
+) -> str:
+    """Prompt d'analyse d'une capture : lecture de l'image d'abord, chiffres ensuite."""
+    return CAPTURE_USER_TEMPLATE.format(
+        vision_report=vision_report.strip() or "Lecture de la capture indisponible.",
+        coherence_context=coherence_context.strip() or "Aucune donnée chiffrée à confronter.",
+        market_context=market_context.strip() or "Aucune donnée de marché fournie.",
+        technical_report=technical_report.strip() or "Non disponible.",
+        course_context=course_context.strip() or "Aucun extrait de cours disponible.",
+        question=(
+            question or "Analyse cette capture et donne-moi ta prédiction."
+        ).strip(),
+    )
+
+
 CHAT_SYSTEM = """Tu es « TradeVision IA », assistant documentaire spécialisé dans les cours \
 de trading et l'analyse technique.
 

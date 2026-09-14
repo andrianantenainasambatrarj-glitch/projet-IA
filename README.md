@@ -1,8 +1,12 @@
 # 📈 TradeVision IA
 
-**Analyse et prédiction de graphiques de trading** — moteur technique déterministe +
-**RAG sur vos cours (PDF/notes)** + **LLM vision** (lecture de captures d'écran) +
-interface web complète et **API REST**.
+**Analyse et prédiction de graphiques de trading** — vous **déposez une capture d'écran**,
+l'IA la lit (actif, unité de temps, figures), récupère les données de marché du même actif
+**dans la même unité de temps**, applique la méthode de **vos cours (PDF/notes)**, et rend un
+résultat complet : lecture, méthode citée, prédiction, plan de trading.
+
+Moteur technique déterministe + **RAG** sur vos cours + **LLM vision** + interface web complète
+et **API REST**.
 
 > Conçu pour tourner **sans configuration** : sans aucune clé API, l'application analyse
 > réellement les marchés (tendance, figures, indicateurs, plan de trading avec stop et
@@ -16,7 +20,8 @@ interface web complète et **API REST**.
 | Bloc | Détail |
 | --- | --- |
 | 🔍 **Analyse d'un marché** | Actions, indices, crypto, devises, matières premières (AAPL, ^FCHI, BTC-USD, EURUSD=X, GC=F…) |
-| 🖼️ **Analyse d'une capture** | Vous envoyez un screenshot de graphique (TradingView, MT4/5…) : le LLM vision le transcrit (figure, niveaux, tendance, UT), l'analyse est croisée avec les données réelles, et **l'actif lu sur l'image est confronté au symbole analysé** — en cas de désaccord, l'application le signale et propose l'analyse du bon symbole en un clic |
+| 🎯 **Analyse d'une capture (parcours principal)** | **Une seule action : déposer votre capture.** Il n'y a ni symbole, ni période, ni unité de temps à choisir : l'IA lit l'actif, l'unité de temps, les figures et les niveaux sur l'image ; l'application récupère les données de marché du **même actif dans la même unité de temps** (une capture en 5 minutes est analysée en 5 minutes, avec un mois d'historique 5 minutes) ; vos cours fournissent la méthode ; le résultat est rendu dans ce rythme |
+| 🧭 **Repli sans clé IA** | Sans fournisseur vision, la capture ne peut pas être lue : l'application le dit, et utilise l'actif + l'unité de temps écrits dans votre question (« analyse EUR/USD en 5 minutes ») pour produire tout de même le résultat technique et documentaire |
 | 🔎 **Traçabilité de la capture** | Le résultat affiche ce que l'IA a réellement lu (actif, unité de temps, figures, résumé, incertitudes, confiance), la taille de l'image transmise et, dans la foulée, **les requêtes de recherche lancées dans vos cours** |
 | 📄 **Import de cours dans l'analyse** | Glissez un PDF/une note **directement dans l'onglet Analyse** : le document est indexé à la volée, puis l'analyse s'appuie immédiatement dessus (citations `[Source n]`) |
 | 🧮 **Moteur technique** | Tendance et structure de marché, pivots, supports/résistances, figures chartistes (ETE, double sommet/creux, triangles, canaux, ranges), figures de bougies (marteau, avalement, étoile du matin…), divergences prix/RSI, cassures avec volume |
@@ -224,7 +229,7 @@ Si `API_ACCESS_TOKEN` est défini, ajoutez l'en-tête `-H "X-API-Token: votre_je
 
 | Méthode | Route | Rôle |
 | --- | --- | --- |
-| `POST` | `/api/analyze` | Analyse complète (symbole et/ou image base64) |
+| `POST` | `/api/analyze` | Analyse d'une capture (`image_base64` + `auto_timeframe`) ou d'un symbole |
 | `POST` | `/api/analyze/upload` | Analyse depuis un fichier image |
 | `POST` | `/api/chat` | Question sur vos cours (RAG) |
 | `GET` | `/api/market/{symbole}` | Bougies, moyennes, Bollinger, RSI, niveaux, résumé |
@@ -290,6 +295,44 @@ Variables : `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, ou `NOTIFY_WEBHOOK_URL`
 (Discord/Slack/ntfy). Veille automatique : `NOTIFY_ENABLED=true`,
 `NOTIFY_INTERVAL_MINUTES`, `NOTIFY_MIN_SCORE`, `WATCHLIST`.
 
+## 🧭 Parcours d'analyse d'une capture
+
+1. **Lecture de l'image** — le modèle vision transcrit la capture : actif, unité de temps,
+   tendance, figures, niveaux, bougies notables, volume, incertitudes.
+2. **Unité de temps de la capture = unité de temps de l'analyse** — la période d'historique
+   est déduite automatiquement :
+
+   | Capture | Unité de temps analysée | Historique récupéré |
+   | --- | --- | --- |
+   | M1 / 1 minute | `1m` | 5 jours |
+   | M5 / 5 minutes | `5m` | 1 mois |
+   | M15, M30 | `15m`, `30m` | 1 mois |
+   | H1 | `1h` | 3 mois |
+   | H4 | `4h` | 6 mois |
+   | D1 / journalier | `1d` | 6 mois |
+   | W1 | `1wk` | 2 ans |
+   | MN / mensuel | `1mo` | 5 ans |
+
+   L'unité de temps « 4 heures » est reconstruite à partir des bougies horaires (les
+   fournisseurs gratuits ne la proposent pas). Si rien n'est lisible sur l'image (ou si aucune
+   clé IA n'est configurée), l'application cherche l'unité de temps puis l'actif **dans votre
+   question**, et le signale : « analyse EUR/USD en 5 minutes » suffit.
+3. **Données de marché du même actif** — l'actif lu sur l'image fait référence ; les chiffres
+   servent à confirmer ou contredire la lecture. Toute divergence est écrite noir sur blanc
+   dans le résultat (bloc « Lecture de la capture » et bandeau de cohérence).
+4. **Méthode de vos cours** — les extraits pertinents sont récupérés (recherche hybride
+   vecteurs + BM25) avec des requêtes adaptées au rythme : scalping pour M1–M30, intraday pour
+   H1/H4, tendance de fond pour D1 et au-delà.
+5. **Résultat** — lecture de la capture, méthode citée `[Source n]`, prédiction probabiliste,
+   plan de trading (entrée, stop, objectifs, R/R, taille de position) et invalidation, **le tout
+   exprimé dans l'unité de temps de la capture**.
+
+L'onglet **Graphique** reste disponible pour vérifier vous-même l'actif, l'unité de temps et les
+bougies utilisés. L'analyse d'un symbole sans capture reste possible via l'API
+(`POST /api/analyze` avec `symbol`).
+
+---
+
 ## 🧪 Tests
 
 ```bash
@@ -297,7 +340,7 @@ pip install pytest
 python -m pytest tests -q
 ```
 
-**119 tests** couvrent : indicateurs techniques, découpage/ingestion (dont un vrai PDF),
+**134 tests** couvrent : indicateurs techniques, découpage/ingestion (dont un vrai PDF),
 base vectorielle, recherche hybride (y compris le repli BM25), moteur d'analyse, couche
 vision, services d'orchestration, API REST, protection par jeton, interface web,
 **notifications** (envoi réel vers un webhook local), **veille automatique**, **bascule
@@ -306,7 +349,8 @@ automatique de modèle Gemini** (modèle retiré → modèle disponible, testé 
 (RSI neutre, scénarios à 100 %, période/journalié incompatibles, chandeliers de démo…) et
 **chaîne complète de l'analyse d'image** (`tests/test_liaison_image.py`) : reconnaissance des
 paires « EUR/USD »/« ETH/USDT », transmission réelle de l'image au fournisseur (contenu de la
-requête HTTP vérifié), détection d'une incohérence entre la capture et le symbole analysé,
+requête HTTP vérifié), priorité de la capture sur un symbole saisi, unité de temps lue sur
+l'image (M5, H4, D1, W1, MN…) et imposée à l'analyse, repli par la question sans clé IA,
 requêtes RAG tracées, analyse automatique de l'actif lu sur l'image.
 Aucun test ne nécessite Internet ni clé API.
 

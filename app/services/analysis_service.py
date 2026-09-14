@@ -10,8 +10,20 @@ from ..analysis import AnalysisResult, analyze, render_report, to_rag_query
 from ..config import Settings, get_settings
 from ..knowledge import read_stats
 from ..llm import LLMError, clear_llm_error, get_llm, record_llm_error
-from ..market import POPULAR_SYMBOLS, MarketDataError, get_instrument
-from ..prompts import DISCLAIMER, ANALYST_SYSTEM, build_analysis_prompt
+from ..market import (
+    POPULAR_SYMBOLS,
+    MarketDataError,
+    default_period_for_interval,
+    get_instrument,
+    interval_from_timeframe,
+)
+from ..prompts import (
+    ANALYST_SYSTEM,
+    CAPTURE_SYSTEM,
+    DISCLAIMER,
+    build_analysis_prompt,
+    build_capture_prompt,
+)
 from ..reports import get_report_store
 from ..retriever import build_context, search, search_multi
 from ..vision import ChartObservation, read_chart, validate_image
@@ -32,6 +44,8 @@ class AnalysisRequest:
     image: Optional[bytes] = None
     top_k: int = 5
     analyze_detected_symbol: bool = True
+    #: Analyse « capture d'abord » : actif et unité de temps lus sur l'image.
+    auto_timeframe: bool = False
     save: bool = True
 
 
@@ -56,6 +70,8 @@ class AnalysisResponse:
     rag_requetes: list[str] = field(default_factory=list)
     #: Confrontation capture ↔ données chiffrées (symbole demandé, lu sur l'image…).
     coherence: dict[str, Any] = field(default_factory=dict)
+    #: Mode d'analyse réellement appliqué (« capture » : l'image fait référence).
+    mode_analyse: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -73,6 +89,7 @@ class AnalysisResponse:
             "image": self.image,
             "rag_requetes": self.rag_requetes,
             "coherence": self.coherence,
+            "mode_analyse": self.mode_analyse,
         }
 
 
@@ -288,9 +305,15 @@ def _coherence_context(
     lignes = [
         f"- Actif lu sur la capture : {coherence.get('capture_lue') or 'non lisible'} "
         f"(symbole exploitable : {coherence.get('symbole_capture') or 'aucun'})",
-        f"- Unité de temps lue sur la capture : {observation.timeframe or 'non lisible'}",
+        f"- Unité de temps lue sur la capture : {observation.timeframe or 'non lisible'}"
+        f" (unité de temps de l'analyse : {coherence.get('unite_de_temps_donnees') or 'inconnue'})",
         f"- Actif des données chiffrées : {coherence.get('symbole_demande') or 'aucun'}",
     ]
+    if coherence.get("symbole_remplace"):
+        lignes.append(
+            f"- Remarque : le symbole saisi ({coherence.get('symbole_saisi')}) a été écarté — "
+            "c'est l'actif de la capture qui est analysé."
+        )
     if coherence.get("incoherent"):
         lignes += [
             "INCOHÉRENCE : la capture NE correspond PAS à l'actif des données chiffrées.",
@@ -318,6 +341,7 @@ def _render_demo_answer(
     warnings: Sequence[str],
     rag_mode: str,
     fallback_reason: str = "",
+    capture_non_lue: bool = False,
 ) -> str:
     """Réponse complète produite sans LLM : moteur technique + cours indexés."""
     lines: list[str] = []
@@ -350,7 +374,14 @@ def _render_demo_answer(
     if observation is not None and not observation.available:
         lines.append(f"> 🖼️ Lecture de l'image indisponible : {observation.error}\n")
 
-    lines.append("### 1. Lecture du graphique")
+    lines.append(
+        "### 1. Lecture du marché" if capture_non_lue else "### 1. Lecture du graphique"
+    )
+    if capture_non_lue:
+        lines.append(
+            "> ⚠️ Votre capture n'a pas pu être lue : ce qui suit décrit les **données de "
+            "marché** de l'actif identifié, pas les bougies de votre image."
+        )
     if analysis is not None:
         trend = analysis.trend
         lines.append(
@@ -391,8 +422,10 @@ def _render_demo_answer(
             lines.append("- Aucune figure chartiste nette sur la période analysée.")
     else:
         lines.append(
-            "- Aucune donnée de marché chiffrée disponible : fournissez un symbole "
-            "(ex : AAPL, BTC-USD, ^FCHI) ou configurez une clé LLM pour lire l'image."
+            "- Aucune donnée de marché chiffrée disponible : la capture n'a pas pu être lue "
+            "(aucune IA vision configurée ou unité de temps illisible). Indiquez l'actif et, "
+            "si besoin, l'unité de temps dans votre question — par exemple « analyse EUR/USD "
+            "en 5 minutes » — ou ajoutez une clé API pour activer la lecture d'image."
         )
 
     if observation is not None and observation.available:
@@ -506,37 +539,27 @@ def run_analysis(
 
     image = validate_image(request.image, settings) if request.image else None
 
-    # 1) Données de marché -------------------------------------------- #
-    symbol = (request.symbol or "").strip()
-    if symbol:
-        try:
-            instrument = get_instrument(
-                symbol, request.period, request.interval, settings=settings
-            )
-        except MarketDataError as exc:
-            warnings.append(f"Données indisponibles pour {symbol} : {exc}")
-    elif image is None:
-        warnings.append(
-            "Aucun symbole ni image fournis : seules les connaissances du cours "
-            "peuvent être mobilisées."
-        )
-
-    # 2) Vision ------------------------------------------------------- #
+    # 1) Lecture de la capture EN PREMIER ------------------------------ #
+    # La capture est la pièce maîtresse : elle donne l'actif, l'unité de temps et les
+    # figures. Les données de marché ne viennent qu'ensuite, pour confirmer ou infirmer
+    # cette lecture avec des chiffres fiables.
     coherence: dict[str, Any] = {
-        "symbole_demande": instrument.symbol if instrument is not None else symbol,
+        "symbole_demande": (request.symbol or "").strip(),
         "capture_lue": "",
         "symbole_capture": "",
+        "unite_de_temps_capture": "",
+        "unite_de_temps_donnees": request.interval,
         "incoherent": False,
         "message": "",
     }
     if image is not None:
-        # On annonce au modèle vision l'actif que l'application va analyser : il peut
-        # ainsi signaler une différence au lieu de la laisser passer inaperçue.
-        actif_attendu = instrument.symbol if instrument is not None else symbol
+        # On annonce au modèle vision l'actif éventuellement saisi : il peut ainsi
+        # signaler une différence au lieu de la laisser passer inaperçue.
+        actif_attendu = (request.symbol or "").strip()
         instruction = ""
         if actif_attendu:
             instruction = (
-                f"L'application analyse par ailleurs le symbole « {actif_attendu} ». "
+                f"L'utilisateur a par ailleurs indiqué le symbole « {actif_attendu} ». "
                 "Lis l'actif réellement affiché sur l'image et, s'il diffère, écris-le "
                 "explicitement dans « marche_ou_symbole_estime »."
             )
@@ -546,46 +569,166 @@ def run_analysis(
         if not observation.available:
             warnings.append(observation.error)
 
-        # Confrontation capture ↔ symboles : sans ce contrôle, une capture d'un autre
-        # actif était analysée en silence avec les chiffres du symbole saisi.
-        if observation.available:
-            capture_lue = (observation.symbol_guess or "").strip()
-            detecte = guess_symbol(f"{capture_lue} {observation.summary}")
-            coherence["capture_lue"] = capture_lue
-            coherence["symbole_capture"] = detecte
+    # 2) Unité de temps : la capture d'abord, puis la question, puis journalier
+    period, interval = request.period, request.interval
+    intervalle_lu = ""
+    origine_temps = "defaut"
+    if observation is not None and observation.available:
+        intervalle_lu = interval_from_timeframe(observation.timeframe)
+        if intervalle_lu:
+            origine_temps = "capture"
+    if not intervalle_lu:
+        # Repli utile : l'utilisateur peut écrire l'unité de temps dans sa question
+        # (« analyse en 5 minutes »), notamment quand l'IA vision n'est pas configurée.
+        intervalle_question = interval_from_timeframe(request.question)
+        if intervalle_question:
+            intervalle_lu = intervalle_question
+            origine_temps = "question"
+    coherence["unite_de_temps_capture"] = intervalle_lu
+    coherence["origine_unite_de_temps"] = origine_temps
 
-            if detecte and instrument is None and request.analyze_detected_symbol:
-                try:
-                    instrument = get_instrument(
-                        detecte, request.period, request.interval, settings=settings
-                    )
-                    coherence["symbole_demande"] = detecte
-                    warnings.append(
-                        f"Symbole « {detecte} » reconnu sur l'image : les données de marché "
-                        "correspondantes ont été ajoutées pour croiser l'analyse."
-                    )
-                except MarketDataError:
-                    warnings.append(
-                        f"Symbole « {detecte} » suggéré par l'image, mais aucune donnée "
-                        "de marché n'a pu être récupérée."
-                    )
-            elif instrument is not None and detecte and detecte.upper() != instrument.symbol.upper():
-                coherence["incoherent"] = True
+    if request.auto_timeframe:
+        if intervalle_lu:
+            interval = intervalle_lu
+            period = default_period_for_interval(interval)
+            source_temps = (
+                f"lue sur la capture ({observation.timeframe})"
+                if origine_temps == "capture"
+                else "indiquée dans votre question"
+            )
+            coherence["message_temps"] = (
+                f"Unité de temps {source_temps} : {interval} → données récupérées sur {period}."
+            )
+        else:
+            # Rien de lisible : on le dit, et on analyse en journalier par défaut.
+            period = default_period_for_interval("1d")
+            interval = "1d"
+            if image is not None:
+                warnings.append(
+                    "Unité de temps illisible sur la capture : l'analyse a été menée en "
+                    "journalier (1d) par défaut. Ajoutez l'unité de temps dans votre "
+                    "question (ex. « analyse en 5 minutes ») pour la forcer."
+                )
+                coherence["message_temps"] = (
+                    "Unité de temps non lisible sur la capture → analyse en journalier."
+                )
+        coherence["donnees_adaptees"] = bool(intervalle_lu) and origine_temps == "capture"
+
+    coherence["unite_de_temps_donnees"] = interval
+
+    # 3) Symbole : LA CAPTURE FAIT FOI ------------------------------- #
+    # Règle : quand une capture est envoyée, on analyse l'actif réellement affiché.
+    # Un symbole saisi qui désigne autre chose est écarté, et on le dit clairement.
+    saisie = (request.symbol or "").strip()
+    symbol = saisie
+    if image is not None and observation is not None and observation.available:
+        capture_lue = (observation.symbol_guess or "").strip()
+        detecte = guess_symbol(
+            f"{capture_lue} {observation.summary} {observation.timeframe or ''}"
+        )
+        coherence["capture_lue"] = capture_lue
+        coherence["symbole_capture"] = detecte
+        if detecte and detecte.upper() != saisie.upper():
+            symbol = detecte
+            coherence["symbole_demande"] = detecte
+            if saisie:
+                coherence["symbole_remplace"] = True
+                coherence["symbole_saisi"] = saisie
                 coherence["message"] = (
-                    f"La capture semble montrer « {capture_lue or detecte} » alors que les "
-                    f"données chiffrées portent sur {instrument.symbol}. Relancez l'analyse "
-                    f"avec le symbole {detecte} pour croiser la capture et le marché."
+                    f"La capture montre « {capture_lue or detecte} » : l'analyse porte sur "
+                    f"cet actif ({detecte}), et non sur « {saisie} »."
                 )
                 warnings.append(
-                    "Incohérence détectée : la capture ne correspond pas au symbole analysé "
-                    f"({capture_lue or detecte} sur l'image, {instrument.symbol} pour les "
-                    "données chiffrées). Les figures lues sur l'image et les niveaux calculés "
-                    "ne concernent donc pas le même actif."
+                    f"Symbole saisi ignoré : la capture montre « {capture_lue or detecte} » — "
+                    f"l'analyse porte sur l'actif de l'image ({detecte}), pas sur « {saisie} »."
                 )
-            elif instrument is not None and detecte:
+            else:
+                warnings.append(
+                    f"Actif lu sur la capture : « {capture_lue or detecte} » ({detecte}) — "
+                    "les données de marché de cet actif ont été récupérées pour confirmer "
+                    "la lecture de l'image."
+                )
+
+    # 3 bis) Aucun actif trouvé : on regarde ce que l'utilisateur a écrit.
+    # Indispensable sans clé IA (la capture n'est alors lue par personne) et utile
+    # quand l'image ne montre pas de symbole lisible.
+    if not symbol:
+        detecte_question = guess_symbol(request.question)
+        if detecte_question:
+            symbol = detecte_question
+            coherence["symbole_capture"] = detecte_question
+            coherence["symbole_source_question"] = True
+            warnings.append(
+                f"Actif « {detecte_question} » repris de votre question (aucun actif lisible "
+                "sur l'image) : les données de marché de cet actif ont été récupérées."
+            )
+
+    # 4) Données de marché (chiffres de confirmation) ------------------ #
+    if symbol:
+        try:
+            instrument = get_instrument(symbol, period, interval, settings=settings)
+        except MarketDataError as exc:
+            warnings.append(f"Données indisponibles pour {symbol} : {exc}")
+            # Repli : si l'actif de la capture est introuvable, on revient au symbole
+            # saisi… mais on avertit que les chiffres ne décrivent pas l'image.
+            if coherence.get("symbole_remplace") and saisie:
+                try:
+                    instrument = get_instrument(saisie, period, interval, settings=settings)
+                    coherence["incoherent"] = True
+                    coherence["message"] = (
+                        f"Aucune donnée de marché pour l'actif de la capture ({symbol}) : les "
+                        f"chiffres affichés portent sur {instrument.symbol} et ne confirment "
+                        "donc pas les figures lues sur l'image."
+                    )
+                except MarketDataError:
+                    instrument = None
+    elif image is None:
+        warnings.append(
+            "Aucun symbole ni image fournis : seules les connaissances du cours "
+            "peuvent être mobilisées."
+        )
+
+    # 5) Confrontation capture ↔ données chiffrées --------------------- #
+    if instrument is not None:
+        coherence["symbole_demande"] = instrument.symbol
+        if coherence["symbole_capture"] and (
+            coherence["symbole_capture"].upper() != instrument.symbol.upper()
+        ):
+            # Ne peut arriver qu'en repli : l'actif de la capture était introuvable.
+            coherence["incoherent"] = True
+            if not coherence.get("message"):
+                coherence["message"] = (
+                    f"La capture montre « "
+                    f"{coherence['capture_lue'] or coherence['symbole_capture']} » alors que les "
+                    f"données chiffrées portent sur {instrument.symbol}."
+                )
+        elif coherence["symbole_capture"] and not coherence.get("message"):
+            if coherence.get("symbole_source_question"):
+                coherence["message"] = (
+                    f"Actif repris de votre question : {instrument.symbol} — aucun actif "
+                    "n'était lisible sur la capture."
+                )
+            else:
                 coherence["message"] = (
                     f"Capture et données chiffrées concordent : {instrument.symbol}."
                 )
+        if (
+            coherence.get("unite_de_temps_capture")
+            and coherence["unite_de_temps_capture"] != instrument.timeframe
+        ):
+            warnings.append(
+                f"Unité de temps différente : la capture est en "
+                f"{coherence['unite_de_temps_capture']}, les données chiffrées en "
+                f"{instrument.timeframe}. Les niveaux calculés ne sont pas directement "
+                "comparables aux bougies de l'image."
+            )
+    elif coherence["symbole_capture"]:
+        # Actif lu sur l'image mais aucune donnée de marché exploitable : la capture
+        # reste analysée seule (c'est le mode « leçon + capture »).
+        warnings.append(
+            "Analyse fondée sur la capture seule : aucune donnée de marché n'a pu être "
+            f"récupérée pour {coherence['symbole_capture']}."
+        )
 
     # Les notes de la source (période ajustée, repli démo…) doivent être visibles.
     if instrument is not None:
@@ -612,8 +755,18 @@ def run_analysis(
         )
     if observation is not None and observation.available:
         queries.append(observation.rag_query)
+        # La méthode dépend de l'unité de temps (scalping en M5, swing en H4/D1…) :
+        # on interroge le cours sur le rythme réellement analysé.
+        if interval in {"1m", "5m", "15m", "30m"}:
+            queries.append("scalping intraday bruit frais spread unité de temps courte méthode")
+        elif interval in {"1h", "4h"}:
+            queries.append("intraday swing court H1 H4 compromis analyse structurée")
+        else:
+            queries.append("swing trading D1 W1 tendance de fond fiabilité figures")
     if symbol:
-        queries.append(f"méthode analyse {symbol} unité de temps {request.interval} tendance")
+        queries.append(
+            f"méthode analyse {symbol} unité de temps {interval} tendance"
+        )
 
     if queries:
         retrieval = search_multi(queries, top_k=request.top_k, settings=settings)
@@ -638,18 +791,33 @@ def run_analysis(
         coherence, capture_fournie=image is not None, observation=observation
     )
 
+    # Avec une capture, l'image est le sujet principal : la méthode de rédaction
+    # change (lecture de l'image d'abord, chiffres ensuite, puis le cours).
+    mode_analyse = "capture" if image is not None else "marche"
     if llm is not None:
-        prompt = build_analysis_prompt(
-            market_context=_market_context(instrument),
-            technical_report=render_report(result) if result else "",
-            vision_report=observation.render() if observation else "",
-            coherence_context=contexte_coherence,
-            course_context=course_context,
-            question=request.question,
-        )
+        if mode_analyse == "capture":
+            prompt = build_capture_prompt(
+                vision_report=observation.render() if observation else "",
+                coherence_context=contexte_coherence,
+                market_context=_market_context(instrument),
+                technical_report=render_report(result) if result else "",
+                course_context=course_context,
+                question=request.question,
+            )
+            system_prompt = CAPTURE_SYSTEM
+        else:
+            prompt = build_analysis_prompt(
+                market_context=_market_context(instrument),
+                technical_report=render_report(result) if result else "",
+                vision_report=observation.render() if observation else "",
+                coherence_context=contexte_coherence,
+                course_context=course_context,
+                question=request.question,
+            )
+            system_prompt = ANALYST_SYSTEM
         try:
             response = llm.generate(
-                system=ANALYST_SYSTEM,
+                system=system_prompt,
                 messages=[{"role": "user", "content": prompt}],
                 images=[image] if image else [],
                 use_vision=image is not None,
@@ -682,6 +850,7 @@ def run_analysis(
             # Si une clé existe mais que l'appel a échoué, le dire clairement
             # (ne pas afficher « sans clé LLM » alors que la clé est configurée).
             fallback_reason=("llm_error" if llm_erreur else ""),
+            capture_non_lue=bool(image is not None and (observation is None or not observation.available)),
         )
         mode = "demo"
 
@@ -736,8 +905,8 @@ def run_analysis(
         report_id=report_id,
         request={
             "symbol": symbol,
-            "period": request.period,
-            "interval": request.interval,
+            "period": period,
+            "interval": interval,
             "question": request.question,
             "has_image": image is not None,
             "top_k": request.top_k,
@@ -745,6 +914,7 @@ def run_analysis(
         image=image_info,
         rag_requetes=queries,
         coherence=coherence,
+        mode_analyse=mode_analyse,
     )
 
 

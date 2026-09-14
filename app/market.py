@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import math
 import random
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -44,14 +45,93 @@ PERIODS: dict[str, str] = {
 }
 
 INTERVALS: dict[str, str] = {
+    "1m": "1 minute",
     "5m": "5 minutes",
     "15m": "15 minutes",
     "30m": "30 minutes",
     "1h": "1 heure",
+    "4h": "4 heures",
     "1d": "journalier",
     "1wk": "hebdomadaire",
     "1mo": "mensuel",
 }
+
+#: Unité de temps lue sur une capture → unité de temps des données de marché.
+#: Couvre les écritures des plateformes (MT4/MT5 : M5, H1, D1, W1, MN) ET celles
+#: de TradingView (5m, 15m, 1h, 4h, 1D, 1W, 1M) ainsi que le français écrit.
+_TIMEFRAME_MINUTES: dict[int, str] = {
+    1: "1m", 2: "1m", 3: "1m", 5: "5m", 10: "5m", 15: "15m",
+    30: "30m", 45: "30m", 60: "1h",
+}
+_TIMEFRAME_HOURS: dict[int, str] = {
+    1: "1h", 2: "1h", 3: "1h", 4: "4h", 6: "4h", 8: "4h", 12: "4h", 24: "1d",
+}
+
+#: Unités de temps fixes (aucun chiffre à convertir) — testées AVANT les numériques.
+#: Attention à la casse : « 1M » = mensuel, alors que « 1m » = 1 minute.
+_TF_FIXES: tuple[tuple[str, str], ...] = (
+    (r"\b(?:D\s?1|1\s?[Dd]|daily|journali\w*|quotidien\w*|jour\w*)\b", "1d"),
+    (r"\b(?:W\s?1|1\s?[Ww]|weekly|hebdo\w*|semaine\w*)\b", "1wk"),
+    (r"\b(?:MN|1\s?M|monthly|mensuel\w*|mois)\b", "1mo"),
+)
+
+#: Unités de temps numériques : (motif, groupe de lecture, nature).
+_TF_NUMERIQUES: tuple[tuple[str, str], ...] = (
+    (r"\bM\s?(\d{1,2})\b", "minutes"),                        # M1, M5, M15, M30 (MetaTrader)
+    (r"\bH\s?(\d{1,2})\b", "heures"),                         # H1, H4 (MetaTrader)
+    (r"\b(\d{1,3})\s?(?:minutes?|min|m)\b", "minutes"),        # 5m, 15 min, 30 minutes
+    (r"\b(\d{1,2})\s?(?:h|heures?|hours?)\b", "heures"),       # 1h, 4 heures
+)
+
+
+def interval_from_timeframe(texte: str) -> str:
+    """Traduit l'unité de temps lue sur une capture en unité de temps de l'application.
+
+    « M5 » comme « 5 minutes » ou « 5m » donnent ``5m`` ; « H4 » / « 4 heures » donnent
+    ``4h`` ; « D1 » / « journalier » donnent ``1d`` ; « W1 » → ``1wk`` ; « MN » /
+    « mensuel » → ``1mo``. Renvoie ``""`` si rien n'est lisible.
+
+    C'est ce qui permet d'analyser une capture **dans son propre rythme** : une capture
+    en 5 minutes est analysée sur des bougies de 5 minutes, pas sur du journalier.
+    """
+    texte = (texte or "").strip()
+    if not texte or "non lisible" in texte.lower():
+        return ""
+    for motif, intervalle in _TF_FIXES:
+        if re.search(motif, texte):
+            return intervalle
+    for motif, nature in _TF_NUMERIQUES:
+        trouve = re.search(motif, texte)
+        if not trouve:
+            continue
+        nombre = int(trouve.group(1))
+        if nature == "minutes":
+            return _TIMEFRAME_MINUTES.get(
+                nombre, "5m" if nombre < 5 else ("30m" if nombre < 60 else "1h")
+            )
+        return _TIMEFRAME_HOURS.get(nombre, "4h" if nombre < 24 else "1d")
+    return ""
+
+
+#: Période d'historique adaptée à chaque unité de temps (limites des fournisseurs
+#: gratuits : 7 jours en 1 minute, 60 jours en 5/15/30 minutes, 2 ans en heures).
+PERIODE_PAR_INTERVALLE: dict[str, str] = {
+    "1m": "5d",
+    "5m": "1mo",
+    "15m": "1mo",
+    "30m": "1mo",
+    "1h": "3mo",
+    "4h": "6mo",
+    "1d": "6mo",
+    "1wk": "2y",
+    "1mo": "5y",
+}
+
+
+def default_period_for_interval(interval: str) -> str:
+    """Période d'historique à utiliser quand l'utilisateur n'en impose pas."""
+    return PERIODE_PAR_INTERVALLE.get((interval or "").lower(), "6mo")
+
 
 #: Durée approximative (en jours) couverte par un period.
 _PERIOD_DAYS = {
@@ -149,9 +229,16 @@ def validate_params(period: str, interval: str) -> tuple[str, str]:
         raise MarketDataError(f"Période invalide. Choix : {', '.join(PERIODS)}")
     if interval not in INTERVALS:
         raise MarketDataError(f"Unité de temps invalide. Choix : {', '.join(INTERVALS)}")
-    if interval.endswith("m") and _PERIOD_DAYS.get(period, 186) > 60:
-        # Yahoo limite l'historique intraday ; on ajuste automatiquement.
+    jours = _PERIOD_DAYS.get(period, 186)
+    if interval == "1m" and jours > 7:
+        # 1 minute n'est fourni que sur une semaine glissante.
+        period = "5d"
+    elif interval in {"5m", "15m", "30m"} and jours > 60:
+        # Yahoo limite l'intraday court ; on ajuste automatiquement.
         period = "1mo"
+    elif interval in {"1h", "4h"} and jours > 366:
+        # Historique horaire : deux ans maximum chez les fournisseurs gratuits.
+        period = "1y"
     return period, interval
 
 
@@ -268,6 +355,31 @@ def _from_yahoo_api(symbol: str, period: str, interval: str, timeout: float) -> 
     )
 
 
+#: Unités de temps reconstruites à partir d'une unité plus fine.
+#: « 4 heures » n'est pas fourni par Yahoo : on regroupe quatre bougies horaires.
+_AGGREGATION: dict[str, tuple[str, int]] = {"4h": ("1h", 4)}
+
+
+def _aggregate_candles(candles: list[Candle], facteur: int) -> list[Candle]:
+    """Regroupe ``facteur`` bougies consécutives (O premier, H/L extrêmes, C dernier)."""
+    if facteur < 2 or len(candles) < facteur * 2:
+        return candles
+    sortie: list[Candle] = []
+    for debut in range(0, len(candles) - facteur + 1, facteur):
+        bloc = candles[debut : debut + facteur]
+        sortie.append(
+            Candle(
+                t=bloc[-1].t,
+                o=bloc[0].o,
+                h=max(bougie.h for bougie in bloc),
+                l=min(bougie.l for bougie in bloc),
+                c=bloc[-1].c,
+                v=sum(bougie.v for bougie in bloc),
+            )
+        )
+    return sortie or candles
+
+
 #: Correspondances Stooq pour les symboles Yahoo courants.
 _STOOQ_MAP: dict[str, str] = {
     "^GSPC": "^spx",
@@ -362,10 +474,12 @@ def _from_stooq(symbol: str, period: str, interval: str, timeout: float) -> Inst
 # ------------------------------------------------------------------ #
 
 _BINANCE_INTERVALS = {
+    "1m": "1m",
     "5m": "5m",
     "15m": "15m",
     "30m": "30m",
     "1h": "1h",
+    "4h": "4h",
     "1d": "1d",
     "1wk": "1w",
     "1mo": "1M",
@@ -391,8 +505,8 @@ def _from_binance(symbol: str, period: str, interval: str, timeout: float) -> In
         limite = max(24, jours // 30)
     elif intervalle.endswith("m"):
         limite = max(120, min(1000, jours * 24 * 60 // int(intervalle[:-1])))
-    elif intervalle == "1h":
-        limite = max(120, min(1000, jours * 24))
+    elif intervalle.endswith("h"):
+        limite = max(120, min(1000, jours * 24 // int(intervalle[:-1])))
     else:
         limite = max(60, min(1000, jours))
 
@@ -466,10 +580,12 @@ _DEMO_PROFILES: dict[str, tuple[float, float, float]] = {
 
 #: Nombre de périodes élémentaires par jour, selon l'unité de temps.
 _INTERVAL_PER_DAY: dict[str, float] = {
+    "1m": 1440.0,
     "5m": 288.0,
     "15m": 96.0,
     "30m": 48.0,
     "1h": 24.0,
+    "4h": 6.0,
     "1d": 1.0,
     "1wk": 1 / 7,
     "1mo": 1 / 30,
@@ -501,8 +617,8 @@ def _demo_step(interval: str) -> timedelta:
     """Espacement réel entre deux bougies de démonstration."""
     if interval.endswith("m"):
         return timedelta(minutes=int(interval[:-1]))
-    if interval == "1h":
-        return timedelta(hours=1)
+    if interval.endswith("h"):
+        return timedelta(hours=int(interval[:-1]))
     if interval == "1wk":
         return timedelta(days=7)
     if interval == "1mo":
@@ -614,7 +730,13 @@ def get_instrument(
 
     def try_provider(name: str, function) -> Optional[Instrument]:
         try:
-            instrument = function(symbol, period, interval, settings.market_timeout_s)
+            intervalle_reel, facteur = _AGGREGATION.get(interval, (interval, 1))
+            if name == "binance":
+                # Binance fournit nativement les unités horaires (dont 4h).
+                intervalle_reel, facteur = interval, 1
+            instrument = function(symbol, period, intervalle_reel, settings.market_timeout_s)
+            if facteur > 1:
+                instrument.candles = _aggregate_candles(instrument.candles, facteur)
             instrument.timeframe = interval
             return instrument
         except Exception as exc:
