@@ -1003,6 +1003,24 @@ def detect_breakouts(instrument: Instrument, levels: dict[str, Any]) -> list[Det
 #  Score global, scénarios, plan de trading
 # --------------------------------------------------------------------- #
 
+def rsi_contribution(rsi_value: float) -> tuple[float, str]:
+    """Contribution du RSI au score directionnel + explication lisible.
+
+    Chaque zone a son propre traitement. La zone neutre (45 → 55) ne doit être ni
+    pénalisée ni confondue avec la survente : auparavant un RSI à 50 était compté
+    comme « survente » et retirait 3 points au score.
+    """
+    if rsi_value >= 70:
+        return 3.0, f"RSI {rsi_value:.0f} en surachat (prudence sur les achats tardifs)."
+    if rsi_value >= 55:
+        return 8.0, f"RSI {rsi_value:.0f} orienté à la hausse."
+    if rsi_value <= 30:
+        return -3.0, f"RSI {rsi_value:.0f} en survente (prudence sur les ventes tardives)."
+    if rsi_value <= 45:
+        return -8.0, f"RSI {rsi_value:.0f} orienté à la baisse."
+    return 0.0, f"RSI {rsi_value:.0f} neutre (pas de signal de momentum)."
+
+
 def compute_score(
     trend: dict[str, Any],
     snapshot: dict[str, Any],
@@ -1015,22 +1033,20 @@ def compute_score(
     notes: list[str] = []
 
     rsi_value = float(snapshot.get("rsi14", 50.0))
-    if 55 <= rsi_value < 70:
-        score += 8
-        notes.append(f"RSI {rsi_value:.0f} orienté à la hausse.")
-    elif 30 < rsi_value <= 45:
-        score -= 8
-        notes.append(f"RSI {rsi_value:.0f} orienté à la baisse.")
-    elif rsi_value >= 70:
-        score += 3
-        notes.append(f"RSI {rsi_value:.0f} en surachat (prudence sur les achats tardifs).")
-    else:
-        score -= 3
-        notes.append(f"RSI {rsi_value:.0f} en survente (prudence sur les ventes tardives).")
+    contribution_rsi, note_rsi = rsi_contribution(rsi_value)
+    score += contribution_rsi
+    notes.append(note_rsi)
 
     histogram = float(snapshot.get("macd_histogram", 0.0))
-    score += 8 if histogram > 0 else -8
-    notes.append("MACD haussier." if histogram > 0 else "MACD baissier.")
+    # Un histogramme exactement nul ne doit pas être compté comme baissier.
+    if histogram > 0:
+        score += 8
+        notes.append("MACD haussier.")
+    elif histogram < 0:
+        score -= 8
+        notes.append("MACD baissier.")
+    else:
+        notes.append("MACD neutre (histogramme nul).")
 
     volume_ratio = float(snapshot.get("volume_ratio", 1.0))
     if volume_ratio > 1.4:
@@ -1163,9 +1179,17 @@ def build_setup(
 
 
 def build_scenarios(
-    instrument: Instrument, levels: dict[str, Any], snapshot: dict[str, Any]
+    instrument: Instrument,
+    levels: dict[str, Any],
+    snapshot: dict[str, Any],
+    score: float = 0.0,
 ) -> list[dict[str, Any]]:
-    """Scénarios haussier / baissier avec déclencheurs et invalidation."""
+    """Scénarios haussier / baissier avec déclencheurs, invalidation et probabilités.
+
+    Les deux probabilités sont **dérivées du score directionnel** et complémentaires
+    (elles totalisent 100 %) : auparavant elles étaient calculées séparément à partir
+    de l'éloignement aux niveaux, ce qui pouvait donner 65 % + 65 % = 130 %.
+    """
     price = instrument.closes[-1]
     atr_value = float(snapshot.get("atr14") or price * 0.01)
     supports = levels.get("supports", [])
@@ -1173,24 +1197,25 @@ def build_scenarios(
     nearest_support = float(supports[0]["price"]) if supports else price - atr_value * 2
     nearest_resistance = float(resistances[0]["price"]) if resistances else price + atr_value * 2
 
+    # 50 % au neutre, jusqu'à 85 %/15 % pour un score extrême ; jamais 100 %
+    # (une probabilité de certitude n'existe pas en trading).
+    probabilite_haussiere = max(15.0, min(85.0, 50.0 + float(score) / 4.0))
+    probabilite_baissiere = 100.0 - probabilite_haussiere
+
     return [
         {
             "name": "Scénario haussier",
             "trigger": f"Clôture au-dessus de {nearest_resistance:.4f} avec volume supérieur à la moyenne.",
             "targets": [round(nearest_resistance + atr_value * 1.5, 6), round(nearest_resistance + atr_value * 3, 6)],
             "invalidation": f"Retour sous {nearest_support:.4f}.",
-            "probability_hint": round(
-                100.0 * (0.5 + (nearest_resistance - price) / max(atr_value * 6, 1e-9) * 0.3), 1
-            ),
+            "probability_hint": round(probabilite_haussiere, 1),
         },
         {
             "name": "Scénario baissier",
             "trigger": f"Clôture sous {nearest_support:.4f} avec accélération baissière.",
             "targets": [round(nearest_support - atr_value * 1.5, 6), round(nearest_support - atr_value * 3, 6)],
             "invalidation": f"Reprise au-dessus de {nearest_resistance:.4f}.",
-            "probability_hint": round(
-                100.0 * (0.5 + (price - nearest_support) / max(atr_value * 6, 1e-9) * 0.3), 1
-            ),
+            "probability_hint": round(probabilite_baissiere, 1),
         },
     ]
 
@@ -1280,7 +1305,7 @@ def analyze(instrument: Instrument) -> AnalysisResult:
     score, confidence, score_notes = compute_score(trend, snapshot, patterns, levels, price)
     label = label_for_score(score)
     setup = build_setup(instrument, score, label, levels, snapshot, patterns)
-    scenarios = build_scenarios(instrument, levels, snapshot)
+    scenarios = build_scenarios(instrument, levels, snapshot, score)
     stats = compute_stats(instrument)
 
     # Cohérence : beaucoup de figures contradictoires -> confiance réduite.

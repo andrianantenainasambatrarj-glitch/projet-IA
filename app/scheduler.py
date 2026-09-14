@@ -103,11 +103,27 @@ def start_scheduler(settings: Optional[Settings] = None, *, base_url: str = "") 
         )
         return False
 
+    interval = max(5, int(settings.notify_interval_minutes))
     with _lock:
         if _thread is not None and _thread.is_alive():
-            return True
+            # Le fil tourne déjà : si l'intervalle a changé (formulaire « Alertes &
+            # veille »), on le redémarre pour appliquer la nouvelle cadence — sinon
+            # les réglages affichés ne correspondaient pas au comportement réel.
+            if int(SCHEDULER_STATUS.get("intervalle_minutes", interval)) == interval:
+                SCHEDULER_STATUS.update(
+                    {
+                        "actif": True,
+                        "canaux": notifier.label,
+                        "watchlist": settings.watchlist_symbols,
+                        "raison": "",
+                    }
+                )
+                return True
+            _stop_event.set()
+            ancien = _thread
+        else:
+            ancien = None
         _stop_event.clear()
-        interval = max(5, int(settings.notify_interval_minutes))
         SCHEDULER_STATUS.update(
             {
                 "actif": True,
@@ -122,6 +138,8 @@ def start_scheduler(settings: Optional[Settings] = None, *, base_url: str = "") 
             target=_loop, args=(interval, base_url), name="veille-marche", daemon=True
         )
         _thread.start()
+    if ancien is not None and ancien.is_alive():
+        ancien.join(timeout=2.0)
     logger.info(
         "Veille automatique démarrée : %s marché(s), toutes les %s min, envoi via %s",
         len(settings.watchlist_symbols),

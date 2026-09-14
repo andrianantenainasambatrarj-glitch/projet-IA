@@ -41,7 +41,7 @@ from ..services.analysis_service import AnalysisRequest, run_analysis
 from ..scheduler import scheduler_status, start_scheduler, stop_scheduler
 from ..services.chat_service import ChatRequest, run_chat
 from ..vectorstore import get_vector_store
-from ..vision import decode_image_payload
+from ..vision import decode_image_payload, validate_image
 from .deps import require_token
 
 router = APIRouter(prefix="/api", tags=["analyse"], dependencies=[Depends(require_token)])
@@ -121,14 +121,17 @@ class WatchlistPayload(BaseModel):
 # --------------------------------------------------------------------- #
 
 @router.get("/health", summary="État de l'application et des services")
-def health() -> dict[str, Any]:
+def health(refresh: bool = Query(default=False, description="Tester les sources de données maintenant (lent)")) -> dict[str, Any]:
+    """Diagnostic rapide : les tests réseau (fournisseurs de marché) sont lancés en
+    arrière-plan pour ne jamais faire attendre l'interface. ``?refresh=true`` force
+    un test bloquant (à utiliser ponctuellement)."""
     settings = get_settings()
     return {
         "status": "ok",
         "application": settings.app_name,
         "version": settings.app_version,
         "llm": provider_status(settings),
-        "marche": market_status(settings),
+        "marche": market_status(settings, probe=True if refresh else None),
         "connaissances": read_stats(settings),
         "historique": get_report_store(settings).stats(),
         "notifications": notify_status(settings),
@@ -286,20 +289,31 @@ async def analyze_upload_endpoint(
 ) -> dict[str, Any]:
     settings = get_settings()
     raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Fichier vide.")
     if len(raw) > settings.max_upload_bytes:
         raise HTTPException(
             status_code=413,
             detail=f"Fichier trop volumineux (limite {settings.max_upload_mb} Mo).",
         )
+    # Le fichier doit être une image : sinon on répond 400 avec un message clair
+    # (auparavant l'erreur de format remontait en erreur interne 500).
+    try:
+        image = validate_image(raw, settings)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     request = AnalysisRequest(
         symbol=symbol,
         period=period,
         interval=interval,
         question=question,
-        image=raw,
+        image=image,
         top_k=max(1, min(12, int(top_k))),
     )
-    return run_analysis(request, settings=settings).to_dict()
+    try:
+        return run_analysis(request, settings=settings).to_dict()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 # --------------------------------------------------------------------- #
@@ -479,7 +493,11 @@ def notifications_watchlist(payload: WatchlistPayload) -> dict[str, Any]:
     settings.notify_min_score = payload.min_score
     resultat = run_watchlist_cycle(settings=settings, send=True)
     if payload.start:
-        start_scheduler(settings)
+        # Sans cette ligne, /notifications/watchlist ne démarrait rien du tout :
+        # start_scheduler() sortait immédiatement (NOTIFY_ENABLED=false).
+        settings.notify_enabled = True
+        resultat["demarrage"] = start_scheduler(settings)
+        resultat["veille"] = scheduler_status()
     return resultat
 
 

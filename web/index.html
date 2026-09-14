@@ -5,72 +5,157 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ app_name }} — analyse &amp; prédiction de graphiques</title>
   <meta name="description" content="Analyse technique, RAG sur vos cours de trading et LLM vision : prédictions probabilistes avec gestion du risque.">
+  <meta name="theme-color" content="#0b0f17">
+  <meta name="color-scheme" content="dark light">
   <link rel="stylesheet" href="/static/style.css">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📈</text></svg>">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%230f1523'/><path d='M22 70 L40 46 L54 58 L78 28' stroke='%234f8cff' stroke-width='9' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+  <script>
+    /* Thème appliqué avant le premier rendu : évite tout clignotement. */
+    try {
+      var t = localStorage.getItem("tv-theme");
+      if (!t) t = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+      document.documentElement.dataset.theme = t;
+    } catch (e) { document.documentElement.dataset.theme = "dark"; }
+  </script>
 </head>
 <body>
+<a class="skip-link" href="#contenu">Aller au contenu</a>
+
+<!-- Jeu d'icônes (aucune dépendance externe) -->
+<svg xmlns="http://www.w3.org/2000/svg" class="svg-sprite" aria-hidden="true" focusable="false">
+  <symbol id="i-analyse" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5 21 21"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/><path d="M8 10.5h5"/></symbol>
+  <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 20h18"/><path d="M6 16V9"/><path d="M11 16V4"/><path d="M16 16v-5"/><path d="M21 16V7"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-8 8H8l-5 3V12a8 8 0 0 1 8-8h2a8 8 0 0 1 8 8z"/></symbol>
+  <symbol id="i-book" viewBox="0 0 24 24"><path d="M4 5a2 2 0 0 1 2-2h12v18H6a2 2 0 0 0-2 2z"/><path d="M8 7h7"/></symbol>
+  <symbol id="i-history" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></symbol>
+  <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2.5-3 4"/><path d="M12 17.5h.01"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4"/><path d="M7 9l5-5 5 5"/><path d="M4 20h16"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2.5"/><circle cx="8.5" cy="8.5" r="1.6"/><path d="M21 15.5 16 10.5 5 21"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M6 4l14 8-14 8z"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M22 2 11 13"/><path d="M22 2l-7 20-4-9-9-4z"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></symbol>
+  <symbol id="i-ia" viewBox="0 0 24 24"><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/><circle cx="12" cy="12" r="3.4"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M6 6l1 14h10l1-14"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M4 21h16"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+  <symbol id="i-db" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></symbol>
+  <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="8" r="4"/><path d="M11 11l9 9"/><path d="M17 17l2 2"/><path d="M14 20l2 2"/></symbol>
+</svg>
+
 <div class="wrap">
 
+  <!-- ===================================================== EN-TÊTE ==== -->
   <header class="top">
     <div class="brand">
-      <div class="logo">TV</div>
-      <div>
+      <div class="logo" aria-hidden="true">
+        <svg viewBox="0 0 100 100"><path d="M22 70 L40 46 L54 58 L78 28" fill="none" stroke="currentColor" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+      <div class="brand-text">
         <h1>{{ app_name }}</h1>
-        <p>RAG sur vos cours + LLM vision + moteur d'indicateurs — v{{ app_version }}</p>
+        <p>Cours PDF + LLM vision + moteur technique <span class="dot-sep">·</span> v{{ app_version }}</p>
       </div>
     </div>
-    <div class="badges" id="badges">
-      <span class="badge">Chargement du diagnostic…</span>
+
+    <div class="top-actions">
+      <div class="badges" id="badges" aria-live="polite">
+        <span class="badge"><span class="badge-spinner" aria-hidden="true"></span> Diagnostic…</span>
+      </div>
+      <div class="icon-actions">
+        <button type="button" class="icon-btn" id="btn-health" title="Actualiser le diagnostic" aria-label="Actualiser le diagnostic">
+          <svg class="ico" aria-hidden="true"><use href="#i-refresh"/></svg>
+        </button>
+        <button type="button" class="icon-btn" id="btn-theme" title="Changer de thème" aria-label="Changer de thème">
+          <svg class="ico ico-sun" aria-hidden="true"><use href="#i-sun"/></svg>
+          <svg class="ico ico-moon" aria-hidden="true"><use href="#i-moon"/></svg>
+        </button>
+      </div>
     </div>
   </header>
 
+  <!-- ================================================== BANNIÈRES ==== -->
   <div id="banner-ia">
   {% if llm.derniere_erreur %}
-  <div class="banner" style="border-color:#7f2626;background:linear-gradient(180deg, rgba(239,68,68,0.14), transparent);color:#fca5a5">
-    ⚠️ <b>Le fournisseur IA a renvoyé une erreur</b> — l'application fonctionne en repli
-    (moteur technique + vos cours).<br>
-    <span class="mono small">{{ llm.derniere_erreur.message }}</span><br>
-    <span class="small">Vérifiez <span class="mono">GEMINI_API_KEY</span> et le modèle utilisé
-    (laissez <span class="mono">VISION_MODEL</span> vide pour la détection automatique), puis
-    rechargez cette page. Détail complet : <a href="/api/health">/api/health</a>.</span>
+  <div class="banner banner-err" role="alert">
+    <svg class="ico" aria-hidden="true"><use href="#i-warn"/></svg>
+    <div>
+      <b>Le fournisseur IA a renvoyé une erreur</b> — l'application travaille en <b>repli local</b>
+      (moteur technique + vos cours).<br>
+      <code class="mono">{{ llm.derniere_erreur.message }}</code><br>
+      <span class="small">Vérifiez <span class="mono">GEMINI_API_KEY</span> et le modèle utilisé
+      (laissez <span class="mono">VISION_MODEL</span> vide pour la détection automatique), puis
+      rechargez la page. Détail complet : <a href="/api/health">/api/health</a>.</span>
+    </div>
   </div>
   {% endif %}
   {% if llm.mode_demo %}
-  <div class="banner">
-    🎛️ <b>Mode démo actif</b> — aucun fournisseur LLM n'est configuré. Le moteur technique
-    (tendance, supports/résistances, figures, indicateurs, plan de trading, prédiction
-    probabiliste) et la recherche dans vos cours fonctionnent intégralement.
-    Pour activer la <b>lecture d'image par IA</b> et la <b>rédaction par LLM</b>, ajoutez une
-    clé API gratuite : <span class="mono">GEMINI_API_KEY</span> (Google AI Studio),
-    <span class="mono">OPENAI_API_KEY</span>, <span class="mono">ANTHROPIC_API_KEY</span>
-    ou <span class="mono">OPENROUTER_API_KEY</span> dans les variables d'environnement du
-    service, puis redémarrez.
+  <div class="banner banner-info">
+    <svg class="ico" aria-hidden="true"><use href="#i-ia"/></svg>
+    <div>
+      <b>Mode démo — aucun fournisseur LLM configuré.</b> Le moteur technique (tendance,
+      supports/résistances, figures, indicateurs, plan de trading, prédiction probabiliste) et la
+      recherche dans vos cours fonctionnent intégralement.
+      Pour activer la <b>lecture d'image par IA</b> et la rédaction par LLM, ajoutez une clé API
+      gratuite : <span class="mono">GEMINI_API_KEY</span> (Google AI Studio),
+      <span class="mono">OPENAI_API_KEY</span>, <span class="mono">ANTHROPIC_API_KEY</span> ou
+      <span class="mono">OPENROUTER_API_KEY</span> dans les variables d'environnement, puis redémarrez.
+    </div>
   </div>
   {% endif %}
   </div>
 
-  <nav class="tabs">
-    <button class="active" data-tab="tab-analyse">🔍 Analyse &amp; prédiction</button>
-    <button data-tab="tab-graphique">📈 Graphique</button>
-    <button data-tab="tab-chat">💬 Chat sur mes cours</button>
-    <button data-tab="tab-connaissances">📚 Base de connaissances</button>
-    <button data-tab="tab-historique">🗂️ Historique</button>
-    <button data-tab="tab-notifications">🔔 Alertes &amp; veille</button>
-    <button data-tab="tab-aide">❓ Aide</button>
+  <!-- ======================================================= ONGLETS == -->
+  <nav class="tabs" role="tablist" aria-label="Sections de l'application">
+    <button type="button" role="tab" class="active" id="tab-btn-analyse" aria-controls="tab-analyse" aria-selected="true" data-tab="tab-analyse">
+      <svg class="ico" aria-hidden="true"><use href="#i-analyse"/></svg><span>Analyse</span>
+    </button>
+    <button type="button" role="tab" id="tab-btn-graphique" aria-controls="tab-graphique" aria-selected="false" tabindex="-1" data-tab="tab-graphique">
+      <svg class="ico" aria-hidden="true"><use href="#i-chart"/></svg><span>Graphique</span>
+    </button>
+    <button type="button" role="tab" id="tab-btn-chat" aria-controls="tab-chat" aria-selected="false" tabindex="-1" data-tab="tab-chat">
+      <svg class="ico" aria-hidden="true"><use href="#i-chat"/></svg><span>Chat cours</span>
+    </button>
+    <button type="button" role="tab" id="tab-btn-connaissances" aria-controls="tab-connaissances" aria-selected="false" tabindex="-1" data-tab="tab-connaissances">
+      <svg class="ico" aria-hidden="true"><use href="#i-book"/></svg><span>Connaissances</span>
+    </button>
+    <button type="button" role="tab" id="tab-btn-historique" aria-controls="tab-historique" aria-selected="false" tabindex="-1" data-tab="tab-historique">
+      <svg class="ico" aria-hidden="true"><use href="#i-history"/></svg><span>Historique</span>
+    </button>
+    <button type="button" role="tab" id="tab-btn-notifications" aria-controls="tab-notifications" aria-selected="false" tabindex="-1" data-tab="tab-notifications">
+      <svg class="ico" aria-hidden="true"><use href="#i-bell"/></svg><span>Alertes</span>
+    </button>
+    <button type="button" role="tab" id="tab-btn-aide" aria-controls="tab-aide" aria-selected="false" tabindex="-1" data-tab="tab-aide">
+      <svg class="ico" aria-hidden="true"><use href="#i-help"/></svg><span>Aide</span>
+    </button>
   </nav>
 
-  <!-- =================================================== ANALYSE ======== -->
-  <section class="tab-panel active" id="tab-analyse">
-    <div class="card">
-      <h2>Analyser un marché ou une capture de graphique</h2>
-      <p class="hint">
-        Renseignez un symbole (ex. <span class="mono">AAPL</span>, <span class="mono">BTC-USD</span>,
-        <span class="mono">^FCHI</span>, <span class="mono">EURUSD=X</span>) et/ou joignez une capture.
-        L'analyse croise les données de marché, vos cours indexés (RAG) et, si une clé LLM est
-        configurée, la lecture de l'image par IA.
-      </p>
+  <main id="contenu">
 
-      <form id="form-analyse" class="grid cols-3">
+  <!-- ===================================================== ANALYSE ==== -->
+  <section class="tab-panel active" id="tab-analyse" role="tabpanel" aria-labelledby="tab-btn-analyse">
+
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <h2>Analyser un marché ou une capture de graphique</h2>
+          <p class="hint">
+            Choisissez un symbole et/ou joignez une image : l'analyse croise les données de marché,
+            vos cours indexés (RAG) et — si une clé LLM est configurée — la lecture de l'image par IA.
+          </p>
+        </div>
+      </div>
+
+      <form id="form-analyse" class="grid cols-3" autocomplete="off">
         <label class="field">
           <span>Symbole / marché</span>
           <input type="text" id="symbol" list="symbols-list" placeholder="AAPL, BTC-USD, ^FCHI…" value="{{ default_symbol }}">
@@ -98,367 +183,500 @@
         </label>
       </form>
 
-      <label class="field">
-        <span>Joindre un élément à l'analyse (glisser-déposer ou clic — max {{ max_upload_mb }} Mo)</span>
-      </label>
-      <div class="flex" style="margin-bottom:10px">
-        <button type="button" class="btn primary" id="dz-mode-image">🖼️ Capture de graphique</button>
-        <button type="button" class="btn" id="dz-mode-doc">📄 Cours (PDF / note)</button>
-        <span class="small" id="dz-help">
-          Une capture active la lecture d'image par IA et l'analyse croisée avec les données réelles.
-        </span>
+      <div class="segmented" role="group" aria-label="Type de pièce jointe" id="segmented">
+        <button type="button" class="seg active" id="dz-mode-image" aria-pressed="true">
+          <svg class="ico" aria-hidden="true"><use href="#i-image"/></svg> Capture de graphique
+        </button>
+        <button type="button" class="seg" id="dz-mode-doc" aria-pressed="false">
+          <svg class="ico" aria-hidden="true"><use href="#i-file"/></svg> Cours (PDF / note)
+        </button>
       </div>
 
-      <div class="dropzone" id="dropzone">
+      <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Déposer ou choisir une capture de graphique">
+        <svg class="ico dropzone-ico" aria-hidden="true"><use href="#i-image"/></svg>
         <b>Cliquez ou glissez-déposez une capture de graphique</b>
-        <div class="small">TradingView, MT4/MT5, capture d'écran… — l'IA décrit la figure, les niveaux et l'unité de temps</div>
-        <input type="file" id="image-input" accept="image/*" style="display:none">
+        <span class="small">TradingView, MT4/MT5, capture d'écran… — max {{ max_upload_mb }} Mo (PNG, JPEG, WEBP)</span>
+        <input type="file" id="image-input" accept="image/*" class="sr-only">
       </div>
 
-      <div class="dropzone" id="dropzone-doc" style="display:none">
+      <div class="dropzone" id="dropzone-doc" tabindex="0" role="button" aria-label="Déposer ou choisir des cours" hidden>
+        <svg class="ico dropzone-ico" aria-hidden="true"><use href="#i-file"/></svg>
         <b>Cliquez ou glissez-déposez vos cours (PDF, Markdown, texte)</b>
-        <div class="small">
-          Le document est découpé, indexé dans votre base de connaissances, puis l'analyse est lancée
-          immédiatement en s'appuyant dessus (citations [Source n]).
-        </div>
-        <input type="file" id="doc-input" multiple accept=".pdf,.md,.markdown,.txt,.text,.rst" style="display:none">
+        <span class="small">Le document est découpé, indexé dans votre base, puis utilisé immédiatement par l'analyse (citations [Source n])</span>
+        <input type="file" id="doc-input" multiple accept=".pdf,.md,.markdown,.txt,.text,.rst" class="sr-only">
       </div>
-      <p class="small" id="doc-status"></p>
+      <p class="small status-line" id="dz-help">
+        Une capture active la lecture d'image par IA et l'analyse croisée avec les données réelles.
+      </p>
+      <p class="small status-line" id="doc-status" aria-live="polite"></p>
 
       <label class="field mt">
-        <span>Votre question (optionnel)</span>
+        <span>Votre question <span class="muted">(optionnel)</span></span>
         <textarea id="question" placeholder="Ex : La figure est-elle valide ? Où placer mon stop et mes objectifs ? Quel est le risque ?"></textarea>
       </label>
 
-      <div class="btn-row">
-        <button type="button" class="btn primary" id="btn-analyse">Analyser et prédire</button>
-        <button type="button" class="btn ghost" id="btn-demo">Exemple guidé (AAPL)</button>
-        <label class="field" style="margin:0;min-width:120px">
-          <span>Extraits de cours (top-k)</span>
+      <div class="actionbar">
+        <button type="button" class="btn primary" id="btn-analyse">
+          <svg class="ico" aria-hidden="true"><use href="#i-play"/></svg> Analyser et prédire
+        </button>
+        <button type="button" class="btn subtle" id="btn-demo">Exemple guidé (AAPL)</button>
+        <label class="field compact">
+          <span>Extraits de cours</span>
           <input type="number" id="topk" value="5" min="1" max="12">
         </label>
+        <span class="small kbd-hint">Astuce : <kbd>Ctrl</kbd> + <kbd>Entrée</kbd> lance l'analyse</span>
       </div>
     </div>
 
-    <div class="card" id="result-card" style="display:none">
-      <div class="flex" id="meta" style="margin-bottom:14px"></div>
+    <!-- ------------------------------------------------ résultat ---- -->
+    <div class="card result-card" id="result-card" hidden aria-live="polite" tabindex="-1">
+      <div id="meta" class="badges"></div>
+
       <div class="verdict" id="verdict"></div>
       <div id="warnings"></div>
 
-      <div class="btn-row" style="margin:6px 0 14px">
-        <button class="btn" id="btn-send-notif">🔔 M'envoyer cette analyse</button>
+      <div class="actionbar">
+        <button type="button" class="btn subtle" id="btn-send-notif">
+          <svg class="ico" aria-hidden="true"><use href="#i-bell"/></svg> M'envoyer cette analyse
+        </button>
+        <a class="btn subtle" id="btn-report-export" href="#" target="_blank" rel="noopener" hidden>
+          <svg class="ico" aria-hidden="true"><use href="#i-download"/></svg> Exporter (Markdown)
+        </a>
+        <button type="button" class="btn subtle" id="btn-copy">
+          <svg class="ico" aria-hidden="true"><use href="#i-copy"/></svg> Copier la conclusion
+        </button>
         <span class="small" id="notif-hint"></span>
       </div>
 
-      <h3>Conclusion détaillée</h3>
-      <div class="md" id="answer"></div>
+      <div class="sections" id="result-sections">
+        <section class="block">
+          <h3>Conclusion détaillée</h3>
+          <div class="md" id="answer"></div>
+        </section>
 
-      <h3>Niveaux clés détectés</h3>
-      <div id="levels"></div>
+        <section class="block">
+          <h3>Niveaux clés détectés</h3>
+          <div id="levels"></div>
+        </section>
 
-      <h3>Figures détectées</h3>
-      <div id="patterns"></div>
+        <section class="block">
+          <h3>Figures détectées</h3>
+          <div id="patterns"></div>
+        </section>
 
-      <h3>Extraits de cours utilisés (RAG)</h3>
-      <div class="sources" id="sources"></div>
+        <section class="block">
+          <h3>Extraits de cours utilisés <span class="muted">(RAG)</span></h3>
+          <div class="sources" id="sources"></div>
+        </section>
+      </div>
 
       <details class="disclaimer">
-        <summary>⚠️ Avertissement</summary>
+        <summary><svg class="ico" aria-hidden="true"><use href="#i-warn"/></svg> Avertissement</summary>
         <p>
           Cette analyse est produite à titre éducatif et informatif. Elle ne constitue pas un
-          conseil en investissement. Les marchés comportent un risque de perte en capital ;
-          les performances passées ne préjugent pas des performances futures. Vérifiez chaque
-          niveau et n'engagez qu'un capital dont la perte est acceptable.
+          conseil en investissement. Les marchés comportent un risque de perte en capital ; les
+          performances passées ne préjugent pas des performances futures. Vérifiez chaque niveau et
+          n'engagez qu'un capital dont la perte est acceptable.
         </p>
       </details>
     </div>
   </section>
 
-  <!-- ================================================= GRAPHIQUE ======== -->
-  <section class="tab-panel" id="tab-graphique">
+  <!-- ================================================== GRAPHIQUE ==== -->
+  <section class="tab-panel" id="tab-graphique" role="tabpanel" aria-labelledby="tab-btn-graphique" hidden>
     <div class="card">
-      <h2>Graphique interactif</h2>
-      <p class="hint">
-        Bougies, moyennes mobiles, bandes de Bollinger, RSI, volumes et niveaux clés calculés par
-        le moteur. Survolez le graphique pour lire les valeurs précises.
-      </p>
+      <div class="card-head">
+        <div>
+          <h2>Graphique interactif</h2>
+          <p class="hint">
+            Bougies, moyennes mobiles, bandes de Bollinger, RSI, volumes et niveaux clés calculés par
+            le moteur. Survolez le graphique pour lire les valeurs précises.
+          </p>
+        </div>
+      </div>
+
       <div class="chart-toolbar">
-        <div class="flex">
-          <input type="text" id="chart-symbol" list="symbols-list" style="max-width:190px" placeholder="Symbole">
-          <select id="chart-period" style="max-width:130px">
-            {% for key, label in periodes.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
-          </select>
-          <select id="chart-interval" style="max-width:140px">
-            {% for key, label in intervalles.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
-          </select>
-          <select id="chart-limit" style="max-width:150px">
-            <option value="120">120 bougies</option>
-            <option value="180" selected>180 bougies</option>
-            <option value="260">260 bougies</option>
-            <option value="400">400 bougies</option>
-          </select>
-          <button class="btn" id="chart-refresh">Actualiser</button>
+        <div class="toolbar-group">
+          <label class="field inline">
+            <span class="sr-only">Symbole du graphique</span>
+            <input type="text" id="chart-symbol" list="symbols-list" placeholder="Symbole">
+          </label>
+          <label class="field inline">
+            <span class="sr-only">Période</span>
+            <select id="chart-period">
+              {% for key, label in periodes.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+            </select>
+          </label>
+          <label class="field inline">
+            <span class="sr-only">Unité de temps</span>
+            <select id="chart-interval">
+              {% for key, label in intervalles.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+            </select>
+          </label>
+          <label class="field inline">
+            <span class="sr-only">Nombre de bougies</span>
+            <select id="chart-limit">
+              <option value="120">120 bougies</option>
+              <option value="180" selected>180 bougies</option>
+              <option value="260">260 bougies</option>
+              <option value="400">400 bougies</option>
+            </select>
+          </label>
+          <button type="button" class="btn subtle" id="chart-refresh">
+            <svg class="ico" aria-hidden="true"><use href="#i-refresh"/></svg> Actualiser
+          </button>
         </div>
         <div class="legend" id="chart-legend"></div>
       </div>
+
       <div class="canvas-box">
-        <canvas id="chart" height="560"></canvas>
-        <div class="tooltip" id="tooltip"></div>
+        <canvas id="chart" height="560" role="img" aria-label="Graphique en chandeliers japonais avec moyennes mobiles, volumes et RSI"></canvas>
+        <div class="tooltip" id="tooltip" role="tooltip"></div>
       </div>
-      <p class="small mt" id="chart-status">Chargement…</p>
+      <p class="small mt status-line" id="chart-status" aria-live="polite"></p>
     </div>
   </section>
 
-  <!-- ====================================================== CHAT ======== -->
-  <section class="tab-panel" id="tab-chat">
+  <!-- ======================================================= CHAT ==== -->
+  <section class="tab-panel" id="tab-chat" role="tabpanel" aria-labelledby="tab-btn-chat" hidden>
     <div class="card">
-      <h2>Poser une question sur vos cours</h2>
-      <p class="hint">
-        Recherche hybride (vecteurs + mots-clés) dans votre base de connaissances. Si un LLM est
-        configuré, la réponse est rédigée et cite les passages utilisés ([Source n]) ; sinon les
-        extraits les plus pertinents sont affichés, classés par score.
-      </p>
-      <form id="form-chat" class="flex">
-        <input type="text" id="chat-question" placeholder="Ex : Qu'est-ce qu'une épaule-tête-épaules et comment la trader ?" style="flex:1 1 420px">
-        <select id="chat-topk" style="max-width:150px">
-          <option value="3">3 extraits</option>
-          <option value="5" selected>5 extraits</option>
-          <option value="8">8 extraits</option>
-        </select>
-        <button class="btn primary" id="btn-chat">Demander</button>
+      <div class="card-head">
+        <div>
+          <h2>Poser une question sur vos cours</h2>
+          <p class="hint">
+            Recherche hybride (vecteurs + mots-clés) dans votre base de connaissances. Si un LLM est
+            configuré, la réponse est rédigée et cite les passages utilisés ([Source n]) ; sinon les
+            extraits les plus pertinents sont classés par score.
+          </p>
+        </div>
+      </div>
+
+      <div id="chat-history" class="chat" aria-live="polite">
+        <div class="empty">
+          <svg class="ico" aria-hidden="true"><use href="#i-chat"/></svg>
+          <p>Aucune question pour l'instant. Exemple : « Qu'est-ce qu'une épaule-tête-épaules et comment la trader ? »</p>
+        </div>
+      </div>
+
+      <form id="form-chat" class="composer">
+        <label class="field">
+          <span class="sr-only">Votre question</span>
+          <input type="text" id="chat-question" placeholder="Ex : Qu'est-ce qu'une épaule-tête-épaules et comment la trader ?">
+        </label>
+        <label class="field inline">
+          <span class="sr-only">Nombre d'extraits</span>
+          <select id="chat-topk">
+            <option value="3">3 extraits</option>
+            <option value="5" selected>5 extraits</option>
+            <option value="8">8 extraits</option>
+          </select>
+        </label>
+        <button type="submit" class="btn primary" id="btn-chat">
+          <svg class="ico" aria-hidden="true"><use href="#i-send"/></svg> Demander
+        </button>
       </form>
-      <div id="chat-history" class="mt"></div>
     </div>
   </section>
 
-  <!-- ============================================ CONNAISSANCES ======== -->
-  <section class="tab-panel" id="tab-connaissances">
+  <!-- ============================================== CONNAISSANCES ==== -->
+  <section class="tab-panel" id="tab-connaissances" role="tabpanel" aria-labelledby="tab-btn-connaissances" hidden>
     <div class="card">
-      <h2>Ma base de connaissances</h2>
-      <p class="hint">
-        Importez vos cours (PDF, Markdown, texte). Ils sont découpés par sections, vectorisés et
-        utilisés par l'analyse et le chat. Le corpus d'exemple fourni est déjà indexé.
-      </p>
-      <div class="flex" id="kb-stats"></div>
+      <div class="card-head">
+        <div>
+          <h2>Ma base de connaissances</h2>
+          <p class="hint">
+            Importez vos cours (PDF, Markdown, texte). Ils sont découpés par sections, vectorisés et
+            utilisés par l'analyse et le chat. Le corpus d'exemple fourni est déjà indexé.
+          </p>
+        </div>
+      </div>
+
+      <div class="stats" id="kb-stats"></div>
 
       <div class="grid cols-2 mt">
-        <form id="form-upload">
-          <h3>Importer des fichiers</h3>
+        <form id="form-upload" class="panel">
+          <h3><svg class="ico" aria-hidden="true"><use href="#i-upload"/></svg> Importer des fichiers</h3>
           <label class="field">
             <span>PDF, .md, .txt — max {{ max_upload_mb }} Mo par fichier</span>
             <input type="file" id="kb-files" multiple accept=".pdf,.md,.markdown,.txt,.text,.rst">
           </label>
-          <div class="btn-row">
-            <button class="btn primary" id="btn-upload">Indexer les fichiers</button>
-            <button type="button" class="btn" id="btn-reindex">Réindexer tout</button>
+          <div class="actionbar">
+            <button type="submit" class="btn primary" id="btn-upload">Indexer les fichiers</button>
+            <button type="button" class="btn subtle" id="btn-reindex">
+              <svg class="ico" aria-hidden="true"><use href="#i-refresh"/></svg> Réindexer tout
+            </button>
           </div>
         </form>
 
-        <form id="form-text">
-          <h3>Ajouter une note texte</h3>
+        <form id="form-text" class="panel">
+          <h3><svg class="ico" aria-hidden="true"><use href="#i-file"/></svg> Ajouter une note</h3>
           <label class="field"><span>Titre</span><input type="text" id="text-title" placeholder="Ma méthode de trading"></label>
           <label class="field"><span>Contenu</span><textarea id="text-content" placeholder="Collez ici une fiche, un résumé de cours, vos règles…"></textarea></label>
-          <button class="btn primary" id="btn-text">Indexer la note</button>
+          <button type="submit" class="btn primary" id="btn-text">Indexer la note</button>
         </form>
       </div>
 
-      <h3>Tester la recherche</h3>
-      <form id="form-search" class="flex">
-        <input type="text" id="search-query" placeholder="Ex : divergence RSI sur double sommet" style="flex:1 1 380px">
-        <button class="btn" id="btn-search">Rechercher</button>
-      </form>
+      <div class="panel mt">
+        <h3><svg class="ico" aria-hidden="true"><use href="#i-search"/></svg> Tester la recherche</h3>
+        <form id="form-search" class="composer">
+          <label class="field">
+            <span class="sr-only">Requête de recherche</span>
+            <input type="text" id="search-query" placeholder="Ex : divergence RSI sur double sommet">
+          </label>
+          <button type="submit" class="btn" id="btn-search">Rechercher</button>
+        </form>
+        <div class="sources mt" id="kb-results" aria-live="polite"></div>
+      </div>
 
-      <h3>Documents indexés</h3>
-      <div id="docs-table"><div class="empty">Chargement…</div></div>
+      <h3 class="section-title">Documents indexés</h3>
+      <div id="docs-table"><div class="empty"><span class="skeleton-line"></span></div></div>
     </div>
   </section>
 
-  <!-- ================================================= HISTORIQUE ======= -->
-  <section class="tab-panel" id="tab-historique">
+  <!-- ================================================== HISTORIQUE ==== -->
+  <section class="tab-panel" id="tab-historique" role="tabpanel" aria-labelledby="tab-btn-historique" hidden>
     <div class="card">
-      <h2>Historique des analyses</h2>
-      <p class="hint">Chaque analyse est enregistrée : vous pouvez la relire, l'exporter en Markdown ou la supprimer.</p>
-      <div class="btn-row" style="margin-bottom:12px">
-        <button class="btn" id="btn-refresh-reports" onclick="loadReports()">Actualiser</button>
+      <div class="card-head">
+        <div>
+          <h2>Historique des analyses</h2>
+          <p class="hint">Chaque analyse est enregistrée : relisez-la, exportez-la en Markdown ou supprimez-la.</p>
+        </div>
+        <div class="toolbar-group">
+          <label class="field inline">
+            <span class="sr-only">Filtrer par symbole</span>
+            <input type="text" id="reports-filter" placeholder="Filtrer par symbole…">
+          </label>
+          <button type="button" class="btn subtle" id="btn-refresh-reports">
+            <svg class="ico" aria-hidden="true"><use href="#i-refresh"/></svg> Actualiser
+          </button>
+        </div>
       </div>
-      <div id="reports-table"><div class="empty">Chargement…</div></div>
+      <div id="reports-table"><div class="empty"><span class="skeleton-line"></span></div></div>
     </div>
   </section>
 
-  <!-- =============================================== NOTIFICATIONS ===== -->
-  <section class="tab-panel" id="tab-notifications">
+  <!-- =============================================== NOTIFICATIONS ==== -->
+  <section class="tab-panel" id="tab-notifications" role="tabpanel" aria-labelledby="tab-btn-notifications" hidden>
     <div class="card">
-      <h2>Alertes Telegram &amp; veille automatique</h2>
-      <p class="hint">
-        Recevez vos analyses directement sur votre téléphone (Telegram, gratuit) ou sur un
-        webhook (Discord, Slack, ntfy, Zapier…). La <b>veille automatique</b> analyse votre
-        liste de marchés à intervalle régulier et n'envoie que les situations qui dépassent
-        votre seuil de score.
-      </p>
-
-      <div class="flex" id="notif-status"></div>
-
-      <h3>1. Tester la connexion</h3>
-      <div class="btn-row">
-        <button class="btn" id="btn-notif-test">Envoyer un message de test</button>
-        <span class="small">Nécessite un jeton de bot Telegram ou une URL de webhook (voir l'aide ci-dessous).</span>
+      <div class="card-head">
+        <div>
+          <h2>Alertes Telegram &amp; veille automatique</h2>
+          <p class="hint">
+            Recevez vos analyses sur votre téléphone (Telegram, gratuit) ou sur un webhook
+            (Discord, Slack, ntfy, Zapier…). La <b>veille automatique</b> analyse votre liste de
+            marchés à intervalle régulier et n'envoie que les situations dépassant votre seuil.
+          </p>
+        </div>
       </div>
 
-      <h3>2. Analyser un marché et envoyer le résultat</h3>
-      <form id="form-notif-analysis" class="flex">
-        <input type="text" id="notif-symbol" placeholder="Symbole (ex : AAPL, BTC-USD, ^FCHI)" style="max-width:230px">
-        <select id="notif-interval" style="max-width:150px">
-          {% for key, label in intervalles.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
-        </select>
-        <input type="text" id="notif-question" placeholder="Question (optionnel)" style="flex:1 1 260px">
-        <button class="btn primary" id="btn-notif-analysis">Analyser et envoyer</button>
-      </form>
+      <div class="stats" id="notif-status"></div>
 
-      <h3>3. Veille automatique de ma watchlist</h3>
-      <div class="grid cols-2">
-        <label class="field">
-          <span>Marchés suivis (séparés par des virgules)</span>
-          <input type="text" id="veille-watchlist" value="{{ watchlist }}" placeholder="AAPL,BTC-USD,^FCHI,EURUSD=X">
-        </label>
-        <div class="flex">
-          <label class="field" style="flex:1 1 150px">
+      <div class="grid cols-2 mt">
+        <div class="panel">
+          <h3><svg class="ico" aria-hidden="true"><use href="#i-check"/></svg> 1. Tester la connexion</h3>
+          <p class="small">Nécessite un jeton de bot Telegram ou une URL de webhook (voir le guide ci-dessous).</p>
+          <button type="button" class="btn" id="btn-notif-test">
+            <svg class="ico" aria-hidden="true"><use href="#i-send"/></svg> Envoyer un message de test
+          </button>
+        </div>
+
+        <form id="form-notif-analysis" class="panel">
+          <h3><svg class="ico" aria-hidden="true"><use href="#i-analyse"/></svg> 2. Analyser et envoyer</h3>
+          <div class="field-row">
+            <label class="field">
+              <span>Symbole</span>
+              <input type="text" id="notif-symbol" list="symbols-list" placeholder="AAPL, BTC-USD, ^FCHI">
+            </label>
+            <label class="field">
+              <span>Unité de temps</span>
+              <select id="notif-interval">
+                {% for key, label in intervalles.items() %}<option value="{{ key }}">{{ label }}</option>{% endfor %}
+              </select>
+            </label>
+          </div>
+          <label class="field">
+            <span>Question <span class="muted">(optionnel)</span></span>
+            <input type="text" id="notif-question" placeholder="Ex : résume la situation et les niveaux clés">
+          </label>
+          <button type="submit" class="btn primary" id="btn-notif-analysis">
+            <svg class="ico" aria-hidden="true"><use href="#i-send"/></svg> Analyser et envoyer
+          </button>
+        </form>
+      </div>
+
+      <div class="panel mt">
+        <h3><svg class="ico" aria-hidden="true"><use href="#i-bell"/></svg> 3. Veille automatique de ma watchlist</h3>
+        <div class="grid cols-3">
+          <label class="field">
+            <span>Marchés suivis (virgules)</span>
+            <input type="text" id="veille-watchlist" value="{{ watchlist }}" placeholder="AAPL,BTC-USD,^FCHI,EURUSD=X">
+          </label>
+          <label class="field">
             <span>Intervalle (minutes)</span>
             <input type="number" id="veille-interval" value="{{ notify_interval }}" min="5" max="10080">
           </label>
-          <label class="field" style="flex:1 1 150px">
-            <span>Seuil de score (|score| ≥)</span>
+          <label class="field">
+            <span>Seuil de score |score| ≥</span>
             <input type="number" id="veille-score" value="{{ notify_min_score }}" min="-100" max="100" step="5">
           </label>
         </div>
+        <div class="actionbar">
+          <button type="button" class="btn primary" id="btn-veille-start">
+            <svg class="ico" aria-hidden="true"><use href="#i-play"/></svg> Démarrer la veille
+          </button>
+          <button type="button" class="btn subtle" id="btn-veille-scan">Lancer un scan maintenant</button>
+          <button type="button" class="btn danger" id="btn-veille-stop">
+            <svg class="ico" aria-hidden="true"><use href="#i-stop"/></svg> Arrêter
+          </button>
+        </div>
+        <div id="veille-etat" class="mt" aria-live="polite"></div>
       </div>
-      <div class="btn-row">
-        <button class="btn primary" id="btn-veille-start">Démarrer la veille</button>
-        <button class="btn" id="btn-veille-scan">Lancer un scan maintenant</button>
-        <button class="btn danger" id="btn-veille-stop">Arrêter la veille</button>
-      </div>
-      <div id="veille-etat" class="mt"></div>
-
-      <h3>Comment configurer Telegram (gratuit, 3 minutes)</h3>
-      <ol>
-        <li>Ouvrez Telegram, cherchez <span class="mono">@BotFather</span> et envoyez
-          <span class="mono">/newbot</span>. Choisissez un nom, puis copiez le
-          <b>jeton</b> fourni (forme <span class="mono">123456:ABC-DEF…</span>).</li>
-        <li>Cherchez votre nouveau bot et envoyez-lui <span class="mono">/start</span>
-          (obligatoire : un bot ne peut pas écrire le premier).</li>
-        <li>Récupérez votre <b>chat id</b> : ouvrez
-          <span class="mono">https://api.telegram.org/bot&lt;JETON&gt;/getUpdates</span>
-          dans un navigateur et lisez <span class="mono">result[0].message.chat.id</span>.</li>
-        <li>Sur votre hébergement, ajoutez les variables
-          <span class="mono">TELEGRAM_BOT_TOKEN</span> et <span class="mono">TELEGRAM_CHAT_ID</span>
-          (et <span class="mono">NOTIFY_ENABLED=true</span> pour la veille), puis redémarrez.</li>
-      </ol>
-      <p class="hint">
-        Alternative sans Telegram : <span class="mono">NOTIFY_WEBHOOK_URL</span> (Discord :
-        Paramètres du salon → Intégrations → Webhooks → copier l'URL ; ntfy :
-        <span class="mono">https://ntfy.sh/votre-sujet</span>).
-      </p>
-    </div>
-  </section>
-
-  <!-- ====================================================== AIDE ======== -->
-  <section class="tab-panel" id="tab-aide">
-    <div class="card">
-      <h2>Comment ça marche</h2>
-      <ol>
-        <li><b>Ingestion</b> — vos PDF/notes sont découpés par sections, puis vectorisés
-          (<span class="mono">embeddings</span>) et stockés dans la base locale.</li>
-        <li><b>Analyse technique</b> — le moteur calcule tendance, structure, supports/résistances,
-          figures chartistes et chandeliers, RSI, MACD, ADX, ATR, Bollinger, volumes, puis un
-          score directionnel et un plan (entrée, stop, objectifs, R/R).</li>
-        <li><b>Recherche RAG</b> — la description du graphique et la question servent de requête ;
-          les 3-5 extraits les plus pertinents de vos cours sont récupérés (recherche hybride
-          vecteurs + BM25).</li>
-        <li><b>LLM vision</b> — si une clé API est configurée, l'image est transcrite en description
-          structurée, puis le modèle rédige l'analyse finale en s'appuyant explicitement sur vos
-          cours (citations <span class="mono">[Source n]</span>).</li>
-        <li><b>Réponse</b> — conclusion, prédiction probabiliste, plan de trading, scénario
-          alternatif, limites, avertissement.</li>
-      </ol>
-
-      <h3>API</h3>
-      <p class="hint">Documentation interactive : <a href="/api/docs" target="_blank">/api/docs</a>. Principaux points d'entrée :</p>
-      <table class="data">
-        <thead><tr><th>Méthode</th><th>Route</th><th>Rôle</th></tr></thead>
-        <tbody>
-          <tr><td class="mono">POST</td><td class="mono">/api/analyze</td><td>Analyse complète (symbole et/ou image en base64)</td></tr>
-          <tr><td class="mono">POST</td><td class="mono">/api/analyze/upload</td><td>Analyse depuis un fichier image (multipart)</td></tr>
-          <tr><td class="mono">POST</td><td class="mono">/api/chat</td><td>Question sur vos cours (RAG)</td></tr>
-          <tr><td class="mono">GET</td><td class="mono">/api/market/{symbole}</td><td>Données de marché + séries + résumé technique</td></tr>
-          <tr><td class="mono">GET</td><td class="mono">/api/knowledge</td><td>Documents indexés et statistiques</td></tr>
-          <tr><td class="mono">POST</td><td class="mono">/api/knowledge/upload</td><td>Import de PDF/notes</td></tr>
-          <tr><td class="mono">GET</td><td class="mono">/api/reports</td><td>Historique des analyses</td></tr>
-          <tr><td class="mono">POST</td><td class="mono">/api/notifications/analysis</td><td>Analyser un symbole et l'envoyer (Telegram/webhook)</td></tr>
-          <tr><td class="mono">POST</td><td class="mono">/api/notifications/watchlist</td><td>Scan de la watchlist puis envoi du résumé</td></tr>
-          <tr><td class="mono">POST</td><td class="mono">/api/notifications/veille/start</td><td>Démarrer la veille automatique</td></tr>
-          <tr><td class="mono">GET</td><td class="mono">/api/health</td><td>Diagnostic (LLM, marché, index)</td></tr>
-        </tbody>
-      </table>
-
-      <h3>Activer la vision et la rédaction par IA</h3>
-      <p class="hint">
-        Ajoutez une variable d'environnement sur votre hébergement puis redémarrez :
-        <span class="mono">GEMINI_API_KEY</span> (clé gratuite sur Google AI Studio — recommandé),
-        <span class="mono">OPENAI_API_KEY</span>, <span class="mono">ANTHROPIC_API_KEY</span> ou
-        <span class="mono">OPENROUTER_API_KEY</span>. Options utiles :
-        <span class="mono">LLM_PROVIDER</span> (forçage du fournisseur),
-        <span class="mono">VISION_MODEL</span>, <span class="mono">TEXT_MODEL</span>,
-        <span class="mono">EMBEDDING_PROVIDER</span> (<span class="mono">gemini</span> pour des
-        embeddings sémantiques de meilleure qualité).
-      </p>
-
-      <h3>Quel modèle Gemini est utilisé ?</h3>
-      <p class="hint">
-        Google renomme et retire régulièrement ses modèles (par exemple
-        <span class="mono">gemini-2.5-flash</span>, retiré aux nouveaux comptes et remplacé par
-        <span class="mono">gemini-3.6-flash</span>). TradeVision IA <b>détecte automatiquement</b>
-        les modèles disponibles pour votre clé et bascule sur le suivant si l'un d'eux n'existe
-        plus : vous n'avez rien à changer. Le modèle réellement utilisé est indiqué dans
-        <a href="/api/health">/api/health</a> (<span class="mono">llm.modele_vision</span>) et
-        après chaque analyse. Pour l'imposer manuellement, définissez
-        <span class="mono">VISION_MODEL</span> (ex. <span class="mono">gemini-3.6-flash</span>).
-      </p>
-
-      <h3>Limites assumées</h3>
-      <ul>
-        <li>Aucune garantie de gain : les sorties sont des scénarios probabilistes.</li>
-        <li>La lecture d'image peut se tromper sur les valeurs d'échelle ou de temps.</li>
-        <li>Les données de marché sont gratuites (Yahoo/Stooq) avec un léger différé ; si le réseau
-          est indisponible, l'application bascule sur des séries de démonstration clairement
-          signalées.</li>
-        <li>Les embeddings par défaut (hachage local) sont légers : pour une recherche sémantique
-          plus fine, utilisez un fournisseur d'embeddings API ou <span class="mono">sentence-transformers</span>.</li>
-        <li>Si <span class="mono">API_ACCESS_TOKEN</span> est défini, les appels <span class="mono">/api/*</span>
-          exigent l'en-tête <span class="mono">X-API-Token</span>. Cette interface fonctionne (le jeton lui est
-          transmis automatiquement), mais il s'agit d'une protection légère : toute personne ayant accès à la page
-          peut lire le jeton dans le code source. Pour un usage strictement privé, rendez le service privé ou
-          gérez une authentification complète.</li>
-      </ul>
 
       <details class="disclaimer">
-        <summary>⚠️ Avertissement complet</summary>
-        <p>
-          TradeVision IA est un outil pédagogique d'aide à la décision. Il ne fournit ni conseil
-          en investissement, ni recommandation personnalisée, ni garantie de résultat. Les
-          marchés financiers présentent un risque de perte totale ou partielle du capital.
-          L'utilisateur reste seul responsable de ses décisions et de leur conformité aux
-          réglementations applicables.
+        <summary><svg class="ico" aria-hidden="true"><use href="#i-help"/></svg> Configurer Telegram (gratuit, 3 minutes)</summary>
+        <ol class="steps">
+          <li>Ouvrez Telegram, cherchez <span class="mono">@BotFather</span> et envoyez <span class="mono">/newbot</span>. Choisissez un nom, puis copiez le <b>jeton</b> fourni (forme <span class="mono">123456:ABC-DEF…</span>).</li>
+          <li>Cherchez votre nouveau bot et envoyez-lui <span class="mono">/start</span> (obligatoire : un bot ne peut pas écrire le premier).</li>
+          <li>Récupérez votre <b>chat id</b> : ouvrez <span class="mono">https://api.telegram.org/bot&lt;JETON&gt;/getUpdates</span> et lisez <span class="mono">result[0].message.chat.id</span>.</li>
+          <li>Sur votre hébergement, ajoutez <span class="mono">TELEGRAM_BOT_TOKEN</span>, <span class="mono">TELEGRAM_CHAT_ID</span> (et <span class="mono">NOTIFY_ENABLED=true</span> pour la veille), puis redémarrez.</li>
+        </ol>
+        <p class="hint">
+          Alternative sans Telegram : <span class="mono">NOTIFY_WEBHOOK_URL</span> — Discord
+          (Paramètres du salon → Intégrations → Webhooks), ntfy
+          (<span class="mono">https://ntfy.sh/votre-sujet</span>), Slack, Zapier…
         </p>
       </details>
     </div>
   </section>
 
+  <!-- ======================================================= AIDE ==== -->
+  <section class="tab-panel" id="tab-aide" role="tabpanel" aria-labelledby="tab-btn-aide" hidden>
+    <div class="card">
+      <div class="card-head"><div><h2>Comment ça marche</h2></div></div>
+      <ol class="steps">
+        <li><b>Ingestion</b> — vos PDF/notes sont découpés par sections, vectorisés (<span class="mono">embeddings</span>) et stockés dans la base locale.</li>
+        <li><b>Analyse technique</b> — le moteur calcule tendance, structure, supports/résistances, figures chartistes et chandeliers, RSI, MACD, ADX, ATR, Bollinger, volumes, puis un score directionnel et un plan (entrée, stop, objectifs, R/R).</li>
+        <li><b>Recherche RAG</b> — la description du graphique et votre question servent de requête ; les extraits les plus pertinents de vos cours sont récupérés (recherche hybride vecteurs + BM25).</li>
+        <li><b>LLM vision</b> — si une clé API est configurée, l'image est transcrite en description structurée, puis le modèle rédige l'analyse en s'appuyant explicitement sur vos cours (citations <span class="mono">[Source n]</span>).</li>
+        <li><b>Réponse</b> — conclusion, prédiction probabiliste, plan de trading, scénario alternatif, limites, avertissement.</li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <h2>Réglages qui pilotent l'application</h2>
+      <div class="table-wrap">
+        <table class="data">
+          <thead><tr><th>Variable</th><th>Rôle</th><th>Défaut conseillé</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">GEMINI_API_KEY</td><td>Clé Google AI Studio (gratuite) : lecture d'image + rédaction</td><td class="mono">AQ.…</td></tr>
+            <tr><td class="mono">VISION_MODEL</td><td>Modèle de vision — <b>laisser vide</b> pour la détection automatique</td><td class="muted">(vide)</td></tr>
+            <tr><td class="mono">EMBEDDING_PROVIDER</td><td>Recherche sémantique (<span class="mono">gemini</span>) ou hachage local</td><td class="mono">gemini</td></tr>
+            <tr><td class="mono">API_ACCESS_TOKEN</td><td>Protection légère de l'API (jeton automatiquement injecté dans cette page)</td><td class="muted">recommandé</td></tr>
+            <tr><td class="mono">NOTIFY_ENABLED</td><td>Active la veille automatique (avec un canal configuré)</td><td class="mono">true</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <details class="disclaimer">
+        <summary><svg class="ico" aria-hidden="true"><use href="#i-ia"/></svg> Quel modèle Gemini est utilisé ?</summary>
+        <p>
+          Google renomme et retire régulièrement ses modèles (par exemple
+          <span class="mono">gemini-2.5-flash</span>, retiré aux nouveaux comptes et remplacé par
+          <span class="mono">gemini-3.6-flash</span>). {{ app_name }} <b>détecte automatiquement</b>
+          les modèles disponibles pour votre clé et bascule sur le suivant si l'un d'eux n'existe
+          plus : vous n'avez rien à modifier. Le modèle réellement utilisé est indiqué dans l'en-tête
+          et sur <a href="/api/health">/api/health</a> (<span class="mono">llm.modele_vision</span>).
+          Pour l'imposer : <span class="mono">VISION_MODEL=gemini-3.6-flash</span>.
+        </p>
+      </details>
+
+      <details class="disclaimer">
+        <summary><svg class="ico" aria-hidden="true"><use href="#i-db"/></svg> Où sont mes données ?</summary>
+        <p>
+          Vos PDF importés, l'index vectoriel, l'historique des analyses et les notes restent sur
+          votre hébergement (SQLite local, dossier <span class="mono">data/</span>). Aucune donnée
+          n'est envoyée à un tiers, sauf l'image et le texte soumis au fournisseur LLM que vous avez
+          choisi (uniquement si une clé API est configurée).
+        </p>
+      </details>
+
+      <details class="disclaimer">
+        <summary><svg class="ico" aria-hidden="true"><use href="#i-key"/></svg> Protection par jeton (<span class="mono">API_ACCESS_TOKEN</span>)</summary>
+        <p>
+          Si la variable est définie, les appels <span class="mono">/api/*</span> exigent
+          l'en-tête <span class="mono">X-API-Token</span>. Cette interface fonctionne
+          (le jeton lui est transmis automatiquement), mais il s'agit d'une <b>protection
+          légère</b> : toute personne ayant accès à la page peut lire le jeton dans le code
+          source. Pour un usage strictement privé, rendez le service privé ou ajoutez une
+          authentification complète.
+        </p>
+      </details>
+    </div>
+
+    <div class="card">
+      <h2>API REST</h2>
+      <p class="hint">Documentation interactive : <a href="/api/docs" target="_blank" rel="noopener">/api/docs</a>. Principaux points d'entrée :</p>
+      <div class="table-wrap">
+        <table class="data">
+          <thead><tr><th>Méthode</th><th>Route</th><th>Rôle</th></tr></thead>
+          <tbody>
+            <tr><td><span class="method post">POST</span></td><td class="mono">/api/analyze</td><td>Analyse complète (symbole et/ou image en base64)</td></tr>
+            <tr><td><span class="method post">POST</span></td><td class="mono">/api/analyze/upload</td><td>Analyse depuis un fichier image (multipart)</td></tr>
+            <tr><td><span class="method post">POST</span></td><td class="mono">/api/chat</td><td>Question sur vos cours (RAG)</td></tr>
+            <tr><td><span class="method get">GET</span></td><td class="mono">/api/market/{symbole}</td><td>Données de marché + séries + résumé technique</td></tr>
+            <tr><td><span class="method get">GET</span></td><td class="mono">/api/knowledge</td><td>Documents indexés et statistiques</td></tr>
+            <tr><td><span class="method post">POST</span></td><td class="mono">/api/knowledge/upload</td><td>Import de PDF / notes</td></tr>
+            <tr><td><span class="method get">GET</span></td><td class="mono">/api/reports</td><td>Historique des analyses</td></tr>
+            <tr><td><span class="method post">POST</span></td><td class="mono">/api/notifications/analysis</td><td>Analyser un symbole et l'envoyer (Telegram/webhook)</td></tr>
+            <tr><td><span class="method post">POST</span></td><td class="mono">/api/notifications/veille/start</td><td>Démarrer la veille automatique</td></tr>
+            <tr><td><span class="method get">GET</span></td><td class="mono">/api/health</td><td>Diagnostic complet (<span class="mono">?refresh=true</span> pour tester les sources)</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Limites assumées</h2>
+      <ul class="limits">
+        <li>Aucune garantie de gain : les sorties sont des <b>scénarios probabilistes</b>.</li>
+        <li>La lecture d'image peut se tromper sur les valeurs d'échelle ou d'unité de temps.</li>
+        <li>Les données de marché sont gratuites (Binance pour la crypto, Yahoo/Stooq pour le reste) avec un léger différé ; si aucune source ne répond, une série de démonstration clairement signalée est utilisée.</li>
+        <li>Les embeddings par défaut (hachage local) sont légers : utilisez un fournisseur d'embeddings API pour une recherche sémantique plus fine.</li>
+      </ul>
+
+      <details class="disclaimer">
+        <summary><svg class="ico" aria-hidden="true"><use href="#i-warn"/></svg> Avertissement complet</summary>
+        <p>
+          {{ app_name }} est un outil pédagogique d'aide à la décision. Il ne fournit ni conseil en
+          investissement, ni recommandation personnalisée, ni garantie de résultat. Les marchés
+          financiers présentent un risque de perte totale ou partielle du capital. L'utilisateur
+          reste seul responsable de ses décisions et de leur conformité aux réglementations
+          applicables.
+        </p>
+      </details>
+    </div>
+  </section>
+
+  </main>
+
   <footer class="foot">
-    {{ app_name }} v{{ app_version }} — Python / FastAPI · RAG local · moteur technique déterministe.
-    {% if est_espace_huggingface %} Hébergé sur Hugging Face Spaces.{% endif %}
+    <span>{{ app_name }} v{{ app_version }}</span>
+    <span class="dot-sep">·</span>
+    <span>Python / FastAPI</span>
+    <span class="dot-sep">·</span>
+    <span>RAG local</span>
+    <span class="dot-sep">·</span>
+    <span>moteur technique déterministe</span>
+    {% if est_espace_huggingface %}<span class="dot-sep">·</span><span>Hébergé sur Hugging Face Spaces</span>{% endif %}
   </footer>
 </div>
 
-<div id="toasts"></div>
+<noscript>
+  <div class="wrap"><div class="banner banner-info">JavaScript est désactivé : l'interface interactive est
+  indisponible, mais l'API reste utilisable (<a href="/api/docs">/api/docs</a>).</div></div>
+</noscript>
+
+<div id="toasts" class="toasts" role="status" aria-live="polite" aria-atomic="false"></div>
 
 <script>
   window.APP_CONFIG = {
@@ -474,7 +692,6 @@
     maxUploadMb: {{ max_upload_mb | tojson }},
     chunks: {{ connaissances.chunks | tojson }},
     documents: {{ connaissances.documents | tojson }},
-    showKbHint: false,
     notifications: {{ notifications | tojson }},
     veille: {{ veille | tojson }},
     notifyEnabled: {{ notify_enabled | tojson }},

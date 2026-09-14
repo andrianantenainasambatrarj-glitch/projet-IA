@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import math
 import random
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -111,6 +112,15 @@ def _cache_key(symbol: str, period: str, interval: str, provider: str) -> str:
 
 def clear_cache() -> None:
     _CACHE.clear()
+
+
+def reset_status_cache() -> None:
+    """Vide le cache du diagnostic de marché (tests, changement de configuration)."""
+    _STATUS_CACHE.update({"time": 0.0, "provider": "", "data": None})
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 # ------------------------------------------------------------------ #
@@ -434,6 +444,9 @@ def _is_crypto_symbol(symbol: str) -> bool:
 #  Mode démonstration (hors-ligne, déterministe par symbole)
 # ------------------------------------------------------------------ #
 
+#: Plafond du nombre de bougies générées en mode démonstration.
+_DEMO_CAP = 800
+
 _DEMO_PROFILES: dict[str, tuple[float, float, float]] = {
     # symbole : (prix de départ, volatilité quotidienne, dérive annualisée)
     "BTC-USD": (62000.0, 0.028, 0.45),
@@ -451,8 +464,60 @@ _DEMO_PROFILES: dict[str, tuple[float, float, float]] = {
 }
 
 
-def demo_instrument(symbol: str, period: str = "6mo", interval: str = "1d", candles: int = 260) -> Instrument:
-    """Génère une série réaliste et déterministe (mêmes données à chaque appel)."""
+#: Nombre de périodes élémentaires par jour, selon l'unité de temps.
+_INTERVAL_PER_DAY: dict[str, float] = {
+    "5m": 288.0,
+    "15m": 96.0,
+    "30m": 48.0,
+    "1h": 24.0,
+    "1d": 1.0,
+    "1wk": 1 / 7,
+    "1mo": 1 / 30,
+}
+
+
+def demo_candle_count(period: str, interval: str, maximum: int = 800) -> int:
+    """Nombre de bougies cohérent avec la période et l'unité de temps demandées.
+
+    Corrige une incohérence : la série de démonstration contenait toujours ~260
+    bougies journalières, quelle que soit la période (« 1 jour » affichait un an
+    de données, « 5 minutes » des bougies quotidiennes).
+    """
+    jours = float(_PERIOD_DAYS.get(period, 186))
+    par_jour = _INTERVAL_PER_DAY.get(interval, 1.0)
+    naturel = int(round(jours * par_jour))
+    return max(60, min(naturel, max(60, int(maximum))))
+
+
+def _demo_end(interval: str) -> datetime:
+    """Dernière bougie : aujourd'hui (date seule) ou « maintenant » en intraday."""
+    maintenant = datetime.now(timezone.utc)
+    if interval in {"1d", "1wk", "1mo"}:
+        return maintenant.replace(hour=0, minute=0, second=0, microsecond=0)
+    return maintenant.replace(second=0, microsecond=0)
+
+
+def _demo_step(interval: str) -> timedelta:
+    """Espacement réel entre deux bougies de démonstration."""
+    if interval.endswith("m"):
+        return timedelta(minutes=int(interval[:-1]))
+    if interval == "1h":
+        return timedelta(hours=1)
+    if interval == "1wk":
+        return timedelta(days=7)
+    if interval == "1mo":
+        return timedelta(days=30)
+    return timedelta(days=1)
+
+
+def demo_instrument(
+    symbol: str, period: str = "6mo", interval: str = "1d", candles: int | None = None
+) -> Instrument:
+    """Génère une série réaliste et déterministe (mêmes données à chaque appel).
+
+    La série respecte la période et l'unité de temps demandées ; ``candles``
+    (optionnel) plafonne le nombre de bougies générées.
+    """
     seed = int(hashlib.sha256(f"{symbol}|{interval}".encode()).hexdigest()[:12], 16)
     rng = random.Random(seed)
     base_price, daily_vol, drift = _DEMO_PROFILES.get(
@@ -465,11 +530,11 @@ def demo_instrument(symbol: str, period: str = "6mo", interval: str = "1d", cand
     elif interval == "1mo":
         daily_vol *= 4.5
 
-    steps = max(60, min(int(candles), 800))
-    step_days = 1 if interval in {"1d", "1wk", "1mo"} else 1
+    steps = demo_candle_count(period, interval, candles or _DEMO_CAP)
+    step = _demo_step(interval)
     price = base_price * (1.0 - drift * 0.15)
     series: list[Candle] = []
-    end = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    end = _demo_end(interval)
     regime_length = max(12, steps // 6)
     regime = 0
     for index in range(steps):
@@ -483,7 +548,7 @@ def demo_instrument(symbol: str, period: str = "6mo", interval: str = "1d", cand
         high = max(open_price, close_price) + wick
         low = max(0.0001, min(open_price, close_price) - abs(rng.gauss(0, daily_vol * 0.6)) * open_price)
         volume = abs(rng.gauss(1_000_000, 250_000)) * (1 + abs(shock) * 12)
-        moment = end - timedelta(days=step_days * (steps - index - 1))
+        moment = end - step * (steps - index - 1)
         series.append(
             Candle(
                 t=int(moment.timestamp()),
@@ -526,8 +591,17 @@ def get_instrument(
     """Renvoie la série de prix d'un symbole, avec repli automatique."""
     settings = settings or get_settings()
     symbol = normalize_symbol(symbol)
-    period, interval = validate_params(period or settings.default_period, interval or settings.default_interval)
+    period_demande = period or settings.default_period
+    period, interval = validate_params(period_demande, interval or settings.default_interval)
     provider = (settings.market_provider or "auto").strip().lower()
+    note_ajustement = ""
+    if period != (period_demande or "").lower():
+        # Yahoo limite l'historique intraday : on le dit explicitement à l'utilisateur
+        # au lieu de changer discrètement la période demandée.
+        note_ajustement = (
+            f"Historique intraday limité : la période « {period_demande} » a été ramenée "
+            f"à « {period} » pour l'unité de temps {interval}."
+        )
 
     key = _cache_key(symbol, period, interval, provider)
     now = time.time()
@@ -577,6 +651,8 @@ def get_instrument(
             "Impossible de récupérer les données de marché : " + " ; ".join(errors[:3])
         )
 
+    if note_ajustement and note_ajustement not in instrument.notes:
+        instrument.notes.append(note_ajustement)
     _CACHE[key] = (now, instrument)
     return instrument
 
@@ -602,19 +678,13 @@ _STATUS_CACHE: dict[str, Any] = {"time": 0.0, "provider": "", "data": None}
 _STATUS_TTL = 300.0
 
 
-def market_status(settings: Settings | None = None) -> dict[str, Any]:
-    """Diagnostic : quels fournisseurs répondent réellement ? (mis en cache 5 min)"""
-    settings = settings or get_settings()
-    provider = (settings.market_provider or "auto").strip().lower()
-    now = time.time()
-    if (
-        _STATUS_CACHE["data"] is not None
-        and _STATUS_CACHE["provider"] == provider
-        and now - _STATUS_CACHE["time"] < _STATUS_TTL
-    ):
-        return _STATUS_CACHE["data"]
+_STATUS_LOCK = threading.Lock()
+_STATUS_PROBE_EN_COURS = False
+
+
+def _probe_providers(provider: str, probe_timeout: float) -> list[dict[str, Any]]:
+    """Teste réellement chaque fournisseur (appels réseau — lent)."""
     checks: list[dict[str, Any]] = []
-    probe_timeout = min(8.0, max(3.0, settings.market_timeout_s / 2))
     mapping = {
         "yfinance": lambda: _from_yfinance("AAPL", "1mo", "1d", probe_timeout),
         "yahoo": lambda: _from_yahoo_api("AAPL", "1mo", "1d", probe_timeout),
@@ -638,16 +708,113 @@ def market_status(settings: Settings | None = None) -> dict[str, Any]:
         except Exception as exc:
             checks.append({"provider": name, "status": "indisponible", "detail": str(exc)[:160]})
     checks.append({"provider": "demo", "status": "toujours disponible (hors-ligne)"})
-    actifs = [item["provider"] for item in checks if item["status"] == "disponible"]
-    active = actifs[0] if actifs else "demo"
-    resultat = {
+    return checks
+
+
+def _status_from_checks(provider: str, checks: list[dict[str, Any]]) -> dict[str, Any]:
+    """Assemble le diagnostic à partir des tests (ordre réellement utilisé)."""
+    disponibles = {
+        item["provider"] for item in checks if item["status"] == "disponible"
+    }
+    # Ordre réellement utilisé par get_instrument (hors crypto)…
+    ordre = [name for name in ("yfinance", "yahoo", "stooq") if name in disponibles]
+    # …et ordre spécifique aux cryptos (Binance en premier).
+    ordre_crypto = [name for name in ("binance", "yfinance", "yahoo", "stooq") if name in disponibles]
+    aucune_source = not ordre and not ordre_crypto
+    return {
         "provider_configure": provider,
-        "provider_actif": active,
-        "providers_disponibles": actifs,
+        "provider_actif": ordre[0] if ordre else ("binance" if ordre_crypto else "demo"),
+        "provider_actif_crypto": ordre_crypto[0] if ordre_crypto else (ordre[0] if ordre else "demo"),
+        "providers_disponibles": ordre_crypto or ordre,
         "checks": checks,
+        "teste_le": _now_iso(),
+        "aucune_source_reelle": aucune_source,
         "symboles_populaires": POPULAR_SYMBOLS,
         "periodes": PERIODS,
         "intervalles": INTERVALS,
     }
-    _STATUS_CACHE.update({"time": now, "provider": provider, "data": resultat})
-    return resultat
+
+
+def _refresh_status_en_arriere_plan(provider: str, probe_timeout: float) -> None:
+    """Lance le test des fournisseurs dans un fil : l'appel HTTP ne bloque jamais."""
+    global _STATUS_PROBE_EN_COURS
+    with _STATUS_LOCK:
+        if _STATUS_PROBE_EN_COURS:
+            return
+        _STATUS_PROBE_EN_COURS = True
+
+    def _travail() -> None:
+        global _STATUS_PROBE_EN_COURS
+        try:
+            checks = _probe_providers(provider, probe_timeout)
+            _STATUS_CACHE.update(
+                {"time": time.time(), "provider": provider, "data": _status_from_checks(provider, checks)}
+            )
+        except Exception:  # pragma: no cover - réseau
+            pass
+        finally:
+            with _STATUS_LOCK:
+                _STATUS_PROBE_EN_COURS = False
+
+    threading.Thread(target=_travail, name="diagnostic-marche", daemon=True).start()
+
+
+def _status_en_attente(provider: str, ancien: Optional[dict[str, Any]]) -> dict[str, Any]:
+    """Diagnostic rapide (aucun réseau) : dernier résultat connu ou « en cours de test »."""
+    if ancien is not None:
+        return {**ancien, "provider_configure": provider, "test_en_cours": True}
+    return {
+        "provider_configure": provider,
+        "provider_actif": "inconnu",
+        "provider_actif_crypto": "inconnu",
+        "providers_disponibles": [],
+        "checks": [],
+        "test_en_cours": True,
+        "teste_le": "",
+        "aucune_source_reelle": False,
+        "symboles_populaires": POPULAR_SYMBOLS,
+        "periodes": PERIODS,
+        "intervalles": INTERVALS,
+    }
+
+
+def market_status(
+    settings: Settings | None = None, *, probe: bool | None = None
+) -> dict[str, Any]:
+    """Diagnostic : quels fournisseurs répondent réellement ?
+
+    ``probe`` contrôle le comportement réseau (les sondes prennent plusieurs
+    secondes : elles ne doivent jamais bloquer l'affichage d'une page) :
+
+    * ``None`` (défaut) : renvoie le dernier diagnostic connu et, s'il est périmé,
+      relance un test **en arrière-plan** ;
+    * ``True`` : test bloquant (utilisé par ``/api/health?refresh=1``) ;
+    * ``False`` : aucun test, uniquement le cache (rendu de la page d'accueil).
+    """
+    settings = settings or get_settings()
+    provider = (settings.market_provider or "auto").strip().lower()
+    now = time.time()
+    cache_valide = (
+        _STATUS_CACHE["data"] is not None
+        and _STATUS_CACHE["provider"] == provider
+        and now - _STATUS_CACHE["time"] < _STATUS_TTL
+    )
+    if probe is not True and cache_valide:
+        return {**_STATUS_CACHE["data"], "test_en_cours": False}
+
+    if probe is False:
+        return _status_en_attente(provider, _STATUS_CACHE["data"] if _STATUS_CACHE["provider"] == provider else None)
+
+    probe_timeout = min(8.0, max(3.0, settings.market_timeout_s / 2))
+    if probe is True:
+        checks = _probe_providers(provider, probe_timeout)
+        resultat = _status_from_checks(provider, checks)
+        resultat["test_en_cours"] = False
+        _STATUS_CACHE.update({"time": time.time(), "provider": provider, "data": resultat})
+        return dict(resultat)
+
+    # probe is None : réponse immédiate + test en arrière-plan
+    _refresh_status_en_arriere_plan(provider, probe_timeout)
+    return _status_en_attente(
+        provider, _STATUS_CACHE["data"] if _STATUS_CACHE["provider"] == provider else None
+    )

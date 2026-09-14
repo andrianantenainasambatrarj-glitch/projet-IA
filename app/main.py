@@ -153,7 +153,10 @@ def home(request: Request):
         "veille": scheduler_status(),
         "max_upload_mb": settings.max_upload_mb,
         "notify_enabled": settings.notify_enabled,
-        "watchlist": " ".join(settings.watchlist_symbols),
+        # Séparateur = virgule : le formulaire renvoie cette valeur telle quelle au
+        # serveur, et « AAPL BTC-USD ^FCHI » était interprété comme UN seul symbole
+        # invalide (la veille ne suivait alors plus rien).
+        "watchlist": ", ".join(settings.watchlist_symbols),
         "notify_interval": settings.notify_interval_minutes,
         "notify_min_score": settings.notify_min_score,
         "app_base_url": PUBLIC_BASE_URL,

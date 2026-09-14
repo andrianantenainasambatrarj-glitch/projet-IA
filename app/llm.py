@@ -46,7 +46,8 @@ GEMINI_MODEL_PREFERENCES: tuple[str, ...] = (
 
 #: Cache de la liste des modèles disponibles, par clé API.
 _MODELS_CACHE: dict[str, tuple[float, list[str]]] = {}
-_MODELS_TTL = 1800.0  # 30 minutes
+_MODELS_TTL = 1800.0  # 30 minutes (découverte réussie)
+_MODELS_TTL_ECHEC = 120.0  # 2 minutes (échec réseau : on ne martèle pas l'API)
 
 #: Dernière erreur par fournisseur (affichée dans l'interface pour ne pas mentir).
 _LAST_ERRORS: dict[str, dict[str, str]] = {}
@@ -97,6 +98,14 @@ def _should_try_next_model(message: str) -> bool:
     même si le corps de la réponse est peu explicite.
     """
     return _is_model_unavailable(message) or "(404)" in message
+
+
+def cached_models(llm: "BaseLLM") -> list[str]:
+    """Modèles connus **sans appel réseau** (cache de découverte uniquement)."""
+    cle = getattr(llm, "api_key", "")
+    cle = cle[-10:] if len(cle) > 10 else cle
+    entree = _MODELS_CACHE.get(cle)
+    return list(entree[1]) if entree else []
 
 
 PROVIDER_LABELS: dict[str, str] = {
@@ -241,12 +250,12 @@ class GeminiLLM(BaseLLM):
         maintenant = time.time()
         if not refresh:
             entree = _MODELS_CACHE.get(cle)
-            if entree and maintenant - entree[0] < _MODELS_TTL:
+            if entree and maintenant - entree[0] < (_MODELS_TTL if entree[1] else _MODELS_TTL_ECHEC):
                 return list(entree[1])
 
         modeles: list[str] = []
         try:
-            with httpx.Client(timeout=min(self.timeout, 20.0)) as client:
+            with httpx.Client(timeout=min(self.timeout, 12.0)) as client:
                 response = client.get(
                     "https://generativelanguage.googleapis.com/v1beta/models",
                     params={"key": self.api_key, "pageSize": 200},
@@ -262,8 +271,9 @@ class GeminiLLM(BaseLLM):
         except Exception:
             modeles = []
 
-        if modeles:
-            _MODELS_CACHE[cle] = (maintenant, modeles)
+        # Un échec est aussi mémorisé (durée courte) : sans cela, chaque affichage
+        # de page relançait une requête réseau bloquante.
+        _MODELS_CACHE[cle] = (maintenant, modeles)
         return modeles
 
     def _candidate_models(self, use_images: bool) -> list[str]:
@@ -788,14 +798,24 @@ def provider_status(settings: Settings | None = None) -> dict[str, Any]:
         modele_vision = getattr(llm, "vision_model_effective", "") or getattr(llm, "vision_model", "")
         modele_texte = getattr(llm, "text_model", "") or modele_vision
         if isinstance(llm, GeminiLLM):
-            disponibles = llm.list_models()
-            if disponibles and modele_vision in ("", "auto"):
-                modele_vision = "auto (détecté au 1er appel)"
+            # IMPORTANT : on lit uniquement le cache (aucun appel réseau ici).
+            # provider_status() est appelé à chaque affichage de page : déclencher la
+            # découverte des modèles faisait attendre la page plusieurs secondes.
+            connus = cached_models(llm)
+            if connus and modele_vision in ("", "auto"):
+                modele_vision = connus[0]
 
+    mode_demo = not (
+        (actif == "gemini" and settings.gemini_api_key)
+        or (actif == "openai" and settings.openai_api_key)
+        or (actif == "anthropic" and settings.anthropic_api_key)
+        or (actif == "openrouter" and settings.openrouter_api_key)
+        or actif == "ollama"
+    ) or llm is None
     return {
         "provider_configure": settings.llm_provider,
         "provider_actif": actif,
-        "mode_demo": llm is None,
+        "mode_demo": mode_demo,
         "vision_disponible": bool(llm is not None and llm.supports_vision and not erreur),
         "modele_vision": modele_vision,
         "modele_texte": modele_texte,

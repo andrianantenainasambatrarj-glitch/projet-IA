@@ -21,3 +21,6 @@ data/
 .idea/
 .vscode/
 *.log
+
+# Outils de développement de l’interface (facultatif)
+node_modules/

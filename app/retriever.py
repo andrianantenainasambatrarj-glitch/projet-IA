@@ -107,11 +107,14 @@ def search(
     # --- scores lexicaux (BM25) ------------------------------------- #
     lexical: dict[str, float] = {}
     chunk_by_id = {chunk.chunk_id: chunk for chunk in candidates}
+    # Le filtre par document est converti en ensemble **une seule fois**
+    # (il était reconstruit à chaque itération de la boucle BM25).
+    filtre_docs = set(doc_ids) if doc_ids else None
     for chunk_id, score in bm25.search(query, top_k=max(top_k * 6, 24)):
         chunk = chunk_by_id.get(chunk_id)
         if chunk is None:
             continue
-        if doc_ids and chunk.doc_id not in set(doc_ids):
+        if filtre_docs is not None and chunk.doc_id not in filtre_docs:
             continue
         lexical[chunk_id] = score
 

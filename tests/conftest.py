@@ -17,6 +17,8 @@ def _reset_caches() -> None:
     from app.config import reset_settings_cache
     from app.embeddings import clear_embedder_cache
     from app.llm import clear_llm_cache
+    from app.market import clear_cache as clear_market_cache
+    from app.market import reset_status_cache
     from app.reports import clear_report_stores
     from app.retriever import invalidate_cache
     from app.vectorstore import clear_store_cache
@@ -27,6 +29,8 @@ def _reset_caches() -> None:
     clear_embedder_cache()
     clear_llm_cache()
     invalidate_cache()
+    clear_market_cache()
+    reset_status_cache()
 
 
 @pytest.fixture()

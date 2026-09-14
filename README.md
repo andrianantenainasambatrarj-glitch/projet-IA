@@ -296,12 +296,29 @@ pip install pytest
 python -m pytest tests -q
 ```
 
-**83 tests** couvrent : indicateurs techniques, découpage/ingestion (dont un vrai PDF),
+**98 tests** couvrent : indicateurs techniques, découpage/ingestion (dont un vrai PDF),
 base vectorielle, recherche hybride (y compris le repli BM25), moteur d'analyse, couche
 vision, services d'orchestration, API REST, protection par jeton, interface web,
 **notifications** (envoi réel vers un webhook local), **veille automatique**, **bascule
-automatique de modèle Gemini** (modèle retiré → modèle disponible, testé de bout en bout)
-et **sources de marché crypto Binance**. Aucun test ne nécessite Internet ni clé API.
+automatique de modèle Gemini** (modèle retiré → modèle disponible, testé de bout en bout),
+**sources de marché crypto Binance**, et **non-régression des erreurs de logique corrigées**
+(RSI neutre, scénarios à 100 %, période/journalié incompatibles, chandeliers de démo…).
+Aucun test ne nécessite Internet ni clé API.
+
+### Vérifier l'interface dans un vrai moteur JavaScript (facultatif)
+
+L'interface est aussi testée « comme un navigateur » : la page est réellement exécutée
+(jsdom) et ses écrans sont contrôlés (onglets, analyse, graphique, recherche documentaire,
+chat, historique, thème).
+
+```bash
+npm install jsdom                                  # une seule fois
+node deploy/outils/verifier_interface.mjs http://127.0.0.1:8000
+```
+
+Le script affiche la liste des contrôles (`OK` / `ÉCHEC`), signale toute erreur JavaScript
+et se termine par un code de sortie non nul en cas de problème — utilisable tel quel dans
+une intégration continue.
 
 ---
 

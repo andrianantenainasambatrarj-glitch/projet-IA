@@ -96,12 +96,12 @@ class Settings(BaseSettings):
     vector_backend: str = "auto"  # auto | sqlite | chroma
 
     # ------------------------------------------------------ Données marché
-    # auto | yfinance | stooq | demo
+    # auto | yfinance | yahoo | stooq | binance | demo
     market_provider: str = "auto"
     market_timeout_s: float = 20.0
     default_period: str = "6mo"
     default_interval: str = "1d"
-    demo_candles: int = 260  # bougies générées en mode démo hors-ligne
+    demo_candles: int = 800  # plafond de bougies générées en mode démo (hors-ligne)
 
     # ----------------------------------------------------------- Chemins
     data_dir: str = str(BASE_DIR / "data")

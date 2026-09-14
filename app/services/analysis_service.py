@@ -120,6 +120,23 @@ def guess_symbol(text: str) -> str:
     return ""
 
 
+def _model_label(llm: Optional[Any], *, use_vision: bool) -> str:
+    """Modèle réellement utilisé (résolu par auto-découverte si nécessaire)."""
+    if llm is None:
+        return ""
+    if use_vision:
+        return getattr(llm, "vision_model_effective", "") or getattr(llm, "vision_model", "")
+    # Les fournisseurs qui distinguent texte et vision (Gemini) exposent le modèle
+    # effectivement résolu ; les autres n'ont qu'un seul modèle.
+    return (
+        getattr(llm, "_resolved_text_model", "")
+        or getattr(llm, "text_model", "")
+        or getattr(llm, "vision_model_effective", "")
+        or getattr(llm, "vision_model", "")
+        or getattr(llm, "model", "")
+    )
+
+
 def _market_context(instrument) -> str:
     if instrument is None:
         return "Aucune donnée de marché chiffrée (analyse basée sur l'image seule)."
@@ -376,6 +393,12 @@ def run_analysis(
                         "de marché n'a pu être récupérée."
                     )
 
+    # Les notes de la source (période ajustée, repli démo…) doivent être visibles.
+    if instrument is not None:
+        for note in instrument.notes:
+            if note not in warnings:
+                warnings.append(note)
+
     # 3) Moteur technique --------------------------------------------- #
     if instrument is not None and len(instrument.candles) >= 5:
         try:
@@ -413,7 +436,8 @@ def run_analysis(
     # 5) Réponse ------------------------------------------------------ #
     mode = "ia" if llm is not None else "demo"
     provider = getattr(llm, "provider", "") if llm else ""
-    model = getattr(llm, "vision_model" if (image is not None) else "text_model", "") if llm else ""
+    model = _model_label(llm, use_vision=image is not None)
+    llm_erreur = False
     answer = ""
 
     if llm is not None:
@@ -441,10 +465,12 @@ def run_analysis(
             warnings.append(f"Appel LLM impossible ({message}) — repli sur le moteur local.")
             record_llm_error(provider, message)
             mode = "demo"
+            llm_erreur = True
         except Exception as exc:  # pragma: no cover
             warnings.append(f"Erreur LLM inattendue ({exc}) — repli sur le moteur local.")
             record_llm_error(provider, str(exc))
             mode = "demo"
+            llm_erreur = True
 
     if not answer:
         answer = _render_demo_answer(
@@ -456,7 +482,7 @@ def run_analysis(
             rag_mode=retrieval.mode,
             # Si une clé existe mais que l'appel a échoué, le dire clairement
             # (ne pas afficher « sans clé LLM » alors que la clé est configurée).
-            fallback_reason=("llm_error" if (llm is not None and not answer) else ""),
+            fallback_reason=("llm_error" if llm_erreur else ""),
         )
         mode = "demo"
 
